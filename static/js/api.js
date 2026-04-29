@@ -1,0 +1,306 @@
+// ===================== API‑клиент =====================
+
+/**
+ * Выполняет HTTP‑запрос к серверу с автоматической обработкой 401 (сброс сессии)
+ * и добавляет CSRF‑токен для мутирующих запросов.
+ */
+async function apiFetch(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+
+  // Ищем куку csrf_token (без подчёркивания – так настроено в app.py)
+  if (method !== 'GET') {
+    const csrfCookie = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    if (csrfCookie) {
+      headers['X-CSRFToken'] = csrfCookie.split('=')[1];
+    }
+  }
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers
+    });
+    if (response.status === 401) {
+      currentUser = null;
+      isAdminUser = false;
+      renderFullApp();
+      throw new Error('Unauthorized');
+    }
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Ошибка сервера');
+    return data;
+  } catch (error) {
+    if (error.message !== 'Unauthorized') showToast(error.message);
+    throw error;
+  }
+}
+
+// ===================== Инициализация данных =====================
+async function loadInitialData() {
+  highlightedBookingKey = null;
+  const me = await apiFetch('/api/me').catch(() => ({ login: null, is_admin: false }));
+  currentUser = me.login;
+  isAdminUser = me.is_admin;
+  if (isAdminUser && !adminBookingTarget) adminBookingTarget = currentUser;
+
+  const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+  allBookings = {};
+  bookingsData.forEach(b => { allBookings[b.key] = b.login; });
+  bookingElementsCache.clear();
+
+  if (isAdminUser) {
+    const usersData = await apiFetch('/api/users', { method: 'GET' });
+    allUsers = usersData.map(u => u.login);
+    userProfiles = {};
+    userBookingCounts = {};
+    usersData.forEach(u => {
+      userProfiles[u.login] = {
+        login: u.login, firstName: u.firstName, lastName: u.lastName,
+        middleName: u.middleName, phone: u.phone, email: u.email
+      };
+      userBookingCounts[u.login] = u.bookingCount;
+    });
+    userProfiles['admin'] = { login: 'admin', firstName: 'Администратор', lastName: '', middleName: '', phone: '', email: '' };
+    userBookingCounts['admin'] = 0;
+    const pendingData = await apiFetch('/api/pending', { method: 'GET' });
+    pendingUsers = pendingData;
+  } else if (currentUser) {
+    allUsers = [currentUser];
+    try {
+      const profileData = await apiFetch('/api/profile', { method: 'GET' });
+      userProfiles[currentUser] = profileData;
+    } catch(e) {
+      userProfiles[currentUser] = { login: currentUser, firstName: currentUser, lastName: '', middleName: '', phone: '', email: '' };
+    }
+    userBookingCounts[currentUser] = 0;
+  }
+  renderFullApp();
+}
+
+// ===================== Авторизация =====================
+async function loginUser(login, password) {
+  try {
+    const data = await apiFetch('/api/login', { method: 'POST', body: JSON.stringify({ login, password }) });
+    if (data.login) {
+      currentUser = data.login; isAdminUser = data.is_admin;
+      if (isAdminUser && !adminBookingTarget) adminBookingTarget = currentUser;
+      selectedSlots.clear(); highlightedBookingKey = null;
+      await loadInitialData();
+      let modal = document.getElementById('authModal');
+      if (modal) modal.remove();
+      return { success: true };
+    }
+  } catch(e) { return { success: false, error: e.message }; }
+  return { success: false, error: 'Неизвестная ошибка' };
+}
+
+async function registerUser() {
+  const login = document.getElementById('regLogin')?.value.trim().toLowerCase();
+  const password = document.getElementById('regPassword')?.value;
+  const firstName = document.getElementById('regFirstName')?.value.trim();
+  const lastName = document.getElementById('regLastName')?.value.trim();
+  const middleName = document.getElementById('regMiddleName')?.value.trim();
+  const phone = document.getElementById('regPhone')?.value.trim();
+  const email = document.getElementById('regEmail')?.value.trim();
+  if (!login || !password || password.length < 8) {
+    showToast('Пароль должен быть минимум 8 символов');
+    return;
+  }
+  try {
+    await apiFetch('/api/register', { method: 'POST', body: JSON.stringify({ login, password, firstName, lastName, middleName, phone, email }) });
+    showToast('Заявка отправлена администратору');
+    document.getElementById('registerModal')?.remove();
+  } catch(e) {
+    if (e.message) showToast(e.message);
+  }
+}
+
+async function logoutUser() {
+  await apiFetch('/api/logout', { method: 'POST' }).catch(() => {});
+  currentUser = null; isAdminUser = false; adminBookingTarget = null;
+  selectedSlots.clear(); editingCommentKey = null; bookingFilterTerm = '';
+  highlightedBookingKey = null;
+  renderFullApp();
+}
+
+// ===================== Бронирования =====================
+function isSlotFree(dateStr, hour, dateObj) {
+  const key = `${dateStr}|${hour}`;
+  if (allBookings[key]) return false;
+  let slotDateTime = new Date(dateObj); slotDateTime.setHours(hour, 0, 0, 0);
+  return slotDateTime >= new Date();
+}
+
+function toggleSlotSelection(dateStr, hour, dateObj) {
+  if (!currentUser) { showToast('Сначала авторизуйтесь'); return false; }
+  if (!isAdminUser && !allUsers.includes(currentUser)) { showToast('Учётная запись ожидает подтверждения'); return false; }
+  const key = `${dateStr}|${hour}`;
+  // Если слот уже был выбран – позволяем снять выделение в любом случае (даже если слот занят)
+  if (selectedSlots.has(key)) {
+    selectedSlots.delete(key);
+    renderMainContent();
+    updateInfoPanel();
+    return true;
+  }
+  // Если слот не выбран, но занят – не даём выбрать
+  if (!isSlotFree(dateStr, hour, dateObj)) {
+    showToast('Слот занят или в прошлом');
+    return false;
+  }
+  highlightedBookingKey = null;
+  updateHighlightedBooking();
+  selectedSlots.add(key);
+  renderMainContent();
+  updateInfoPanel();
+  return true;
+}
+
+async function bookSelectedSlots() {
+  if (!currentUser) { showToast('Авторизуйтесь'); return; }
+  if (selectedSlots.size === 0) { showToast('Ничего не выбрано'); return; }
+
+  const slots = Array.from(selectedSlots);
+  const body = { slots };
+  if (isAdminUser && adminBookingTarget && adminBookingTarget !== currentUser) body.targetUser = adminBookingTarget;
+
+  // 1. Мгновенно снимаем выделение
+  selectedSlots.clear();
+  highlightedBookingKey = null;
+  renderMainContent();
+  updateInfoPanel();
+
+  // 2. Загружаем актуальные бронирования и проверяем, не заняты ли слоты
+  try {
+    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+    allBookings = {};
+    bookingsData.forEach(b => { allBookings[b.key] = b.login; });
+
+    const hasConflict = slots.some(slotKey => !!allBookings[slotKey]);
+    if (hasConflict) {
+      showToast('Слоты уже заняты другим пользователем');
+      renderMainContent();
+      updateInfoPanel();
+      updateHighlightedBooking();
+      return;
+    }
+  } catch (e) {
+    console.warn('Предварительная проверка не удалась, продолжаем бронирование');
+  }
+
+  // 3. Все свободны – отправляем запрос на бронирование
+  try {
+    const data = await apiFetch('/api/bookings', { method: 'POST', body: JSON.stringify(body) });
+    showToast(data.message);
+
+    // Обновляем календарь и список
+    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+    allBookings = {};
+    bookingsData.forEach(b => { allBookings[b.key] = b.login; });
+
+    const container = document.getElementById('bookingsListContainer');
+    if (container && container.querySelector('.empty-bookings')) {
+      container.innerHTML = ''; bookingElementsCache.clear();
+    }
+
+    const targetUser = body.targetUser || currentUser;
+    for (const slotKey of slots) {
+      if (allBookings[slotKey] === targetUser) {
+        if (bookingElementsCache.has(slotKey)) continue;
+        const [dateStr, hourStr] = slotKey.split('|');
+        const newSlot = { date: dateStr, hour: parseInt(hourStr), login: targetUser, key: slotKey };
+        const newItem = createBookingItem(newSlot, '');
+        if (container) {
+          const allItems = [...container.children].filter(el => el.getAttribute('data-key'));
+          let inserted = false;
+          for (const existingItem of allItems) {
+            const existingKey = existingItem.getAttribute('data-key');
+            const [existingDate, existingHour] = existingKey.split('|');
+            if (existingDate > dateStr || (existingDate === dateStr && parseInt(existingHour) > newSlot.hour)) {
+              container.insertBefore(newItem, existingItem);
+              inserted = true; break;
+            }
+          }
+          if (!inserted) container.appendChild(newItem);
+          bookingElementsCache.set(slotKey, newItem);
+        }
+      }
+    }
+
+    if (data.created === 0) {
+      showToast('Слоты уже заняты другим пользователем');
+    }
+
+    renderMainContent();
+    updateInfoPanel();
+    updateHighlightedBooking();
+
+  } catch (e) {
+    console.error(e);
+    showToast('Не удалось забронировать. Возможно, слот уже занят.');
+
+    try {
+      const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+      allBookings = {};
+      bookingsData.forEach(b => { allBookings[b.key] = b.login; });
+    } catch (ignored) {}
+
+    renderMainContent();
+    updateInfoPanel();
+    updateHighlightedBooking();
+  }
+}
+
+async function cancelBooking(dateStr, hour) {
+  try {
+    await apiFetch(`/api/bookings/${dateStr}/${hour}`, { method: 'DELETE' });
+    showToast('Бронь отменена');
+    selectedSlots.delete(`${dateStr}|${hour}`);
+    const key = `${dateStr}|${hour}`;
+    if (highlightedBookingKey === key) highlightedBookingKey = null;
+
+    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+    allBookings = {};
+    bookingsData.forEach(b => { allBookings[b.key] = b.login; });
+
+    const bookingElement = document.getElementById(`booking-${key}`);
+    if (bookingElement) { bookingElement.remove(); bookingElementsCache.delete(key); }
+
+    const container = document.getElementById('bookingsListContainer');
+    if (container && container.querySelectorAll('.booking-item[data-key]').length === 0) {
+      container.innerHTML = '<div class="empty-bookings">✨ Нет броней</div>';
+      bookingElementsCache.clear();
+    }
+    renderMainContent(); updateInfoPanel(); updateHighlightedBooking();
+  } catch (e) {}
+}
+
+// ===================== Комментарии =====================
+async function loadComment(key) {
+  const [date, hour] = key.split('|');
+  try { return await apiFetch(`/api/comments/${date}/${hour}`, { method: 'GET' }); }
+  catch(e) { return { text: '', lastEditedBy: null, lastEditedAt: null }; }
+}
+
+// ===================== Дополнительные функции (для админа) =====================
+async function fetchUsersList() {
+  if (!isAdminUser) return;
+  const usersData = await apiFetch('/api/users', { method: 'GET' });
+  allUsers = usersData.map(u => u.login);
+  userProfiles = {};
+  userBookingCounts = {};
+  usersData.forEach(u => {
+    userProfiles[u.login] = {
+      login: u.login, firstName: u.firstName, lastName: u.lastName,
+      middleName: u.middleName, phone: u.phone, email: u.email
+    };
+    userBookingCounts[u.login] = u.bookingCount;
+  });
+  return usersData;
+}
+
+async function fetchPendingList() {
+  if (!isAdminUser) return;
+  pendingUsers = await apiFetch('/api/pending', { method: 'GET' });
+  return pendingUsers;
+}
