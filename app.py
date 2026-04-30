@@ -29,10 +29,67 @@ app.config['CSRF_COOKIE_SAMESITE'] = 'Lax'     # для работы через 
 csrf = SeaSurf(app)
 
 DATABASE = 'booking.db'
-ADMIN_LOGIN = os.environ.get('ADMIN_LOGIN', 'admin').strip()
+ADMIN_LOGIN = os.environ.get('ADMIN_LOGIN').strip()
+ADMIN_DEFAULT_PASSWORD = os.environ.get('ADMIN_PASSWORD')
 
 if not ADMIN_LOGIN:
     raise RuntimeError("ADMIN_LOGIN не задан или пуст!")
+
+def _ensure_tables():
+    """Создать таблицы, если их ещё нет (выполняется при старте)."""
+    db = sqlite3.connect(DATABASE)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            login TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            first_name TEXT DEFAULT '',
+            last_name TEXT DEFAULT '',
+            middle_name TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            email TEXT DEFAULT ''
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS pending_users (
+            login TEXT PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            first_name TEXT DEFAULT '',
+            last_name TEXT DEFAULT '',
+            middle_name TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            email TEXT DEFAULT ''
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS bookings (
+            slot_key TEXT PRIMARY KEY,
+            login TEXT NOT NULL,
+            FOREIGN KEY (login) REFERENCES users(login)
+        )
+    ''')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS comments (
+            slot_key TEXT PRIMARY KEY,
+            text TEXT DEFAULT '',
+            last_edited_by TEXT,
+            last_edited_at TEXT,
+            FOREIGN KEY (slot_key) REFERENCES bookings(slot_key)
+        )
+    ''')
+    # Создаём администратора, если его ещё нет
+    if not db.execute('SELECT 1 FROM users WHERE login = ?', (ADMIN_LOGIN,)).fetchone():
+        import bcrypt
+        hashed = bcrypt.hashpw(ADMIN_DEFAULT_PASSWORD.encode(), bcrypt.gensalt()).decode()
+        db.execute(
+            'INSERT INTO users (login, password_hash, first_name) VALUES (?, ?, ?)',
+            (ADMIN_LOGIN, hashed, 'Администратор')
+        )
+    db.commit()
+    db.close()
+
+# Вызов при загрузке модуля
+with app.app_context():
+    _ensure_tables()
 
 # ---------------------- Инициализация Socket.IO ----------------------
 socketio = SocketIO(app, async_mode='threading')  # для простоты; при использовании eventlet заменить
