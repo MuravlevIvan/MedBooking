@@ -212,21 +212,18 @@ function showEditUserModal(login) {
   });
 }
 
-// ===================== ИСТОРИЯ БРОНИРОВАНИЙ (С ПОДТВЕРЖДЕНИЕМ ПРИ ПЕРЕКЛЮЧЕНИИ МЕЖДУ КОММЕНТАРИЯМИ) =====================
+// ===================== ИСТОРИЯ БРОНИРОВАНИЙ (с возможностью передачи начального поиска) =====================
 let currentHistoryPage = 1;
 let currentHistorySearch = '';
 
-// Храним данные активного редактирования
-let _currentEditingData = null; // { div, cancelEdit, saveAndClose, textarea, currentText }
-
-async function showHistoryModal() {
+async function showHistoryModal(initialSearch = '') {
     if (!currentUser) {
         showToast('Авторизуйтесь для просмотра истории');
         showAuthModal();
         return;
     }
     currentHistoryPage = 1;
-    currentHistorySearch = '';
+    currentHistorySearch = initialSearch || '';
     const html = `
         <div class="modal-overlay" id="historyModal">
             <div class="history-modal">
@@ -242,26 +239,10 @@ async function showHistoryModal() {
     `;
     document.body.insertAdjacentHTML('beforeend', html);
     document.getElementById('historyCloseBtn')?.addEventListener('click', () => {
-        if (_currentEditingData) {
-            if (confirm('Есть несохранённые изменения. Закрыть окно?')) {
-                closeCurrentEditing(false);
-                document.getElementById('historyModal')?.remove();
-            }
-        } else {
-            document.getElementById('historyModal')?.remove();
-        }
+        document.getElementById('historyModal')?.remove();
     });
     document.getElementById('historyModal')?.addEventListener('click', (e) => {
-        if (e.target === e.currentTarget) {
-            if (_currentEditingData) {
-                if (confirm('Есть несохранённые изменения. Закрыть окно?')) {
-                    closeCurrentEditing(false);
-                    e.currentTarget.remove();
-                }
-            } else {
-                e.currentTarget.remove();
-            }
-        }
+        if (e.target === e.currentTarget) e.currentTarget.remove();
     });
     await loadAndRenderHistory();
 }
@@ -401,43 +382,10 @@ function attachHistoryCommentHandlers() {
     });
 }
 
-// Функция для принудительного завершения текущего редактирования
-async function closeCurrentEditing(saveChanges) {
-    if (!_currentEditingData) return;
-    const { div, cancelEdit, saveAndClose, textarea, currentText } = _currentEditingData;
-    const newText = textarea.value;
-    if (saveChanges) {
-        if (newText.trim() !== currentText.trim()) {
-            await saveAndClose();
-        } else {
-            cancelEdit();
-        }
-    } else {
-        cancelEdit();
-    }
-    _currentEditingData = null;
-}
-
 async function historyCommentClickHandler(e) {
     e.stopPropagation();
     const div = e.currentTarget;
-    if (div.querySelector('.comment-edit-area-history')) return; // уже редактируется этот же
-
-    // Если есть активное редактирование другого элемента – завершаем его с подтверждением
-    if (_currentEditingData && _currentEditingData.div !== div) {
-        const { textarea, currentText } = _currentEditingData;
-        const newText = textarea.value;
-        if (newText.trim() !== currentText.trim()) {
-            const answer = confirm('Есть несохранённые изменения в другом комментарии. Сохранить?');
-            if (answer) {
-                await closeCurrentEditing(true);
-            } else {
-                await closeCurrentEditing(false);
-            }
-        } else {
-            await closeCurrentEditing(false);
-        }
-    }
+    if (div.querySelector('.comment-edit-area-history')) return;
 
     const key = div.getAttribute('data-key');
     if (!key) {
@@ -482,7 +430,6 @@ async function historyCommentClickHandler(e) {
         div.classList.add('editable');
         div.removeEventListener('click', historyCommentClickHandler);
         div.addEventListener('click', historyCommentClickHandler);
-        _currentEditingData = null;
     };
 
     const saveCommentHandler = async () => {
@@ -509,7 +456,6 @@ async function historyCommentClickHandler(e) {
             const commentData = await loadComment(key);
             const displayText = commentData.text || '';
             const editInfoText = commentData.lastEditedBy ? `✏️ ${escapeHtml(commentData.lastEditedBy)}, ${escapeHtml(commentData.lastEditedAt)}` : '';
-            
             const canEditAfter = isAdminUser || (!isPast && ownerLogin === currentUser);
 
             const row = div.closest('tr');
@@ -533,7 +479,6 @@ async function historyCommentClickHandler(e) {
             document.removeEventListener('click', window._historyOutsideHandler);
             delete window._historyOutsideHandler;
         }
-        _currentEditingData = null;
     };
 
     const outsideClickHandler = (event) => {
@@ -565,15 +510,6 @@ async function historyCommentClickHandler(e) {
     }
     window._historyOutsideHandler = outsideClickHandler;
     document.addEventListener('click', window._historyOutsideHandler);
-
-    // Сохраняем данные текущего редактирования
-    _currentEditingData = {
-        div,
-        cancelEdit,
-        saveAndClose: saveCommentHandler,
-        textarea,
-        currentText
-    };
 
     textarea.focus();
 }

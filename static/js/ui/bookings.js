@@ -125,7 +125,7 @@ function createBookingItem(slot, commentText = null) {
   item.innerHTML = `
     <div class="booking-header">
       <div><span class="booking-time">${dayName}, ${timeStr}</span></div>
-      ${isAdminUser ? `<div class="booking-user">👤 ${getDisplayName(owner)} (${owner})</div>` : ''}
+      ${isAdminUser ? `<div class="booking-user" data-login="${owner}" style="cursor:pointer;" title="Нажмите для просмотра истории пользователя">👤 ${getDisplayName(owner)} (${owner})</div>` : ''}
     </div>
     <div class="booking-comment ${!hasComment ? 'empty' : ''}" data-key="${key}" data-owner="${owner}" data-can-edit="${canEdit}">
       ${displayText}
@@ -135,10 +135,12 @@ function createBookingItem(slot, commentText = null) {
       <span class="edit-info"></span>
     </div>`;
 
+  // Обработчик кнопки отмены
   item.querySelector('.cancel-booking-btn')?.addEventListener('click', () => {
     if (confirm('Отменить бронь?')) cancelBooking(slot.date, slot.hour);
   });
 
+  // Обработчик клика по комментарию
   const commentDiv = item.querySelector('.booking-comment');
   if (commentDiv) {
     commentDiv.addEventListener('click', (e) => {
@@ -154,9 +156,24 @@ function createBookingItem(slot, commentText = null) {
     });
   }
 
+  // Для админа: обработчик клика по имени пользователя (открывает историю с фильтром)
+  if (isAdminUser) {
+    const userDiv = item.querySelector('.booking-user');
+    if (userDiv) {
+      userDiv.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const login = userDiv.getAttribute('data-login');
+        if (login) {
+          showHistoryModal(login);
+        }
+      });
+    }
+  }
+
+  // Обработчик клика по всей записи (выделение слота) для владельца/админа
   if (isAdminUser || owner === currentUser) {
     item.addEventListener('click', (e) => {
-      if (e.target.closest('button, .booking-comment, .comment-edit-area, textarea')) return;
+      if (e.target.closest('button, .booking-comment, .comment-edit-area, textarea, .booking-user')) return;
       highlightBookingSlot(key);
     });
   }

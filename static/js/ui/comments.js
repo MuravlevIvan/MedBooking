@@ -1,47 +1,35 @@
 // ===================== Редактирование комментариев (основная страница) =====================
 
-let _mainEditingData = null;       // текущее активное редактирование
-let _isClosing = false;            // флаг, чтобы избежать рекурсивных вызовов
+let _mainEditingData = null;
+let _isClosing = false;
 
-/**
- * Включает режим редактирования для комментария.
- * @param {string} key – ключ слота "YYYY-MM-DD|HH"
- * @param {string} commentText – текущий текст комментария (может быть пустым)
- */
 async function enterEditMode(key, commentText) {
-    // Если сейчас закрываем другое редактирование – ждём
     if (_isClosing) {
         showToast('Пожалуйста, подождите...');
         return;
     }
 
-    // Если уже редактируется другой комментарий – завершаем его с подтверждением
     if (_mainEditingData && _mainEditingData.key !== key) {
         _isClosing = true;
-        const { textarea, originalText, cancelEdit, saveAndClose, div: oldCommentDiv } = _mainEditingData;
+        const { textarea, originalText, cancelEdit, saveAndClose } = _mainEditingData;
         const newText = textarea.value;
-        let shouldClose = false;
         if (newText.trim() !== originalText.trim()) {
             const answer = confirm('Есть несохранённые изменения в другом комментарии. Сохранить?');
             if (answer) {
-                await saveAndClose();   // дожидаемся завершения сохранения и закрытия
+                await saveAndClose();
             } else {
-                cancelEdit();           // синхронно
+                cancelEdit();
             }
         } else {
             cancelEdit();
         }
-        // Убеждаемся, что старый DOM-элемент действительно закрыт
         _mainEditingData = null;
         _isClosing = false;
-        // Даём браузеру время на перерисовку
         await new Promise(resolve => setTimeout(resolve, 50));
     }
 
-    // Если этот же комментарий уже редактируется – ничего не делаем
     if (_mainEditingData && _mainEditingData.key === key) return;
 
-    // Находим элементы
     const bookingItem = document.getElementById(`booking-${key}`);
     if (!bookingItem) return;
     const commentDiv = bookingItem.querySelector('.booking-comment');
@@ -53,11 +41,9 @@ async function enterEditMode(key, commentText) {
         return;
     }
 
-    // Сохраняем исходное состояние
     const originalHtml = commentDiv.innerHTML;
     const currentText = commentText || '';
 
-    // Создаём область редактирования
     const editArea = document.createElement('div');
     editArea.className = 'comment-edit-area';
     editArea.innerHTML = `
@@ -73,7 +59,6 @@ async function enterEditMode(key, commentText) {
     const saveBtn = editArea.querySelector('.comment-save-btn');
     const cancelBtn = editArea.querySelector('.comment-cancel-btn');
 
-    // Функция отмены (восстанавливает исходный вид)
     const cancelEdit = () => {
         if (window._mainOutsideHandler) {
             document.removeEventListener('click', window._mainOutsideHandler);
@@ -81,15 +66,13 @@ async function enterEditMode(key, commentText) {
         }
         commentDiv.innerHTML = originalHtml;
         commentDiv.setAttribute('data-can-edit', canEditAttr);
-        // Перепривязываем обработчик клика
         commentDiv.removeEventListener('click', commentClickHandler);
         commentDiv.addEventListener('click', commentClickHandler);
         _mainEditingData = null;
         editingCommentKey = null;
-        removeOutsideClickHandler(); // старый обработчик (для совместимости)
+        removeOutsideClickHandler();
     };
 
-    // Функция сохранения и закрытия
     const saveAndClose = async () => {
         const newText = textarea.value;
         if (newText.trim() === currentText.trim()) {
@@ -111,7 +94,6 @@ async function enterEditMode(key, commentText) {
             });
             showToast(result.message || 'Комментарий сохранён');
 
-            // Загружаем актуальные данные комментария
             const commentData = await loadComment(key);
             const displayText = commentData.text || '';
             const editInfo = commentData.lastEditedBy ? `✏️ ${commentData.lastEditedBy}, ${commentData.lastEditedAt}` : '';
@@ -120,33 +102,26 @@ async function enterEditMode(key, commentText) {
             const isPastSlot = slotTime < new Date();
             const canEditAfter = isAdminUser || (owner === currentUser && !isPastSlot);
 
-            // Обновляем DOM – заменяем область редактирования на новый комментарий
-            const newCommentHtml = `
+            const parent = commentDiv.parentNode;
+            parent.innerHTML = `
                 <div class="booking-comment ${!displayText ? 'empty' : ''}" data-key="${key}" data-owner="${owner}" data-can-edit="${canEditAfter}">
                     ${displayText ? escapeHtml(displayText) : '✏️ Кликните, чтобы добавить комментарий'}
                 </div>
                 <span class="edit-info">${editInfo}</span>
             `;
-            // Находим родителя (это контейнер, в котором лежат коммент и edit-info)
-            const parent = commentDiv.parentNode;
-            parent.innerHTML = newCommentHtml;
-            // Перепривязываем обработчик клика к новому комментарию
             const newCommentDiv = parent.querySelector('.booking-comment');
             if (newCommentDiv && newCommentDiv.getAttribute('data-can-edit') === 'true') {
                 newCommentDiv.addEventListener('click', commentClickHandler);
             }
-            // Обновляем edit-info, если нужно
             const newEditInfoSpan = parent.querySelector('.edit-info');
             if (newEditInfoSpan && editInfo) newEditInfoSpan.textContent = editInfo;
 
-            // Удаляем глобальный обработчик клика вне
             if (window._mainOutsideHandler) {
                 document.removeEventListener('click', window._mainOutsideHandler);
                 delete window._mainOutsideHandler;
             }
         } catch (err) {
             showToast(err.message || 'Ошибка сохранения');
-            // При ошибке не закрываем редактирование
             return;
         }
         _mainEditingData = null;
@@ -154,7 +129,6 @@ async function enterEditMode(key, commentText) {
         removeOutsideClickHandler();
     };
 
-    // Обработчик клика вне области редактирования
     const outsideClickHandler = (event) => {
         if (editArea && editArea.contains(event.target)) return;
         if (event.target.closest('.comment-save-btn') || event.target.closest('.comment-cancel-btn')) return;
@@ -170,7 +144,6 @@ async function enterEditMode(key, commentText) {
         }
     };
 
-    // Привязываем обработчики кнопок
     saveBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         saveAndClose();
@@ -180,22 +153,13 @@ async function enterEditMode(key, commentText) {
         cancelEdit();
     });
 
-    // Устанавливаем глобальный обработчик клика вне
     if (window._mainOutsideHandler) {
         document.removeEventListener('click', window._mainOutsideHandler);
     }
     window._mainOutsideHandler = outsideClickHandler;
     document.addEventListener('click', window._mainOutsideHandler);
 
-    // Сохраняем данные текущего редактирования
-    _mainEditingData = {
-        key,
-        cancelEdit,
-        saveAndClose,
-        textarea,
-        originalText: currentText,
-        div: commentDiv   // сохраняем ссылку на DOM-элемент
-    };
+    _mainEditingData = { key, cancelEdit, saveAndClose, textarea, originalText: currentText };
     editingCommentKey = key;
     highlightedBookingKey = key;
     updateHighlightedBooking();
@@ -204,7 +168,6 @@ async function enterEditMode(key, commentText) {
     textarea.focus();
 }
 
-// Обработчик клика по комментарию
 function commentClickHandler(e) {
     e.stopPropagation();
     const commentDiv = e.currentTarget;
@@ -219,7 +182,6 @@ function commentClickHandler(e) {
     enterEditMode(key, currentText);
 }
 
-// Утилита для удаления глобального обработчика (для совместимости)
 function removeOutsideClickHandler() {
     if (window._mainOutsideHandler) {
         document.removeEventListener('click', window._mainOutsideHandler);
@@ -267,6 +229,5 @@ window.forceCloseEditing = function() {
     editingCommentKey = null;
 };
 
-// Экспортируем нужные функции глобально
 window.enterEditMode = enterEditMode;
 window.commentClickHandler = commentClickHandler;

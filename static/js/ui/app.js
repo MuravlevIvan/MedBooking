@@ -134,7 +134,7 @@ function renderFullApp() {
     });
   }
 
-  document.getElementById('historyBtn')?.addEventListener('click', showHistoryModal);
+  document.getElementById('historyBtn')?.addEventListener('click', () => showHistoryModal());
 
   document.addEventListener('click', function(e) {
     if (e.target.closest('button, a, input, textarea, .modal-overlay, .toast-msg')) return;
