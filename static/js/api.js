@@ -1,14 +1,9 @@
 // ===================== API‑клиент =====================
 
-/**
- * Выполняет HTTP‑запрос к серверу с автоматической обработкой 401 (сброс сессии)
- * и добавляет CSRF‑токен для мутирующих запросов.
- */
 async function apiFetch(url, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...options.headers };
 
-  // Ищем куку csrf_token (без подчёркивания – так настроено в app.py)
   if (method !== 'GET') {
     const csrfCookie = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
     if (csrfCookie) {
@@ -17,10 +12,7 @@ async function apiFetch(url, options = {}) {
   }
 
   try {
-    const response = await fetch(url, {
-      ...options,
-      headers
-    });
+    const response = await fetch(url, { ...options, headers });
     if (response.status === 401) {
       currentUser = null;
       isAdminUser = false;
@@ -36,7 +28,7 @@ async function apiFetch(url, options = {}) {
   }
 }
 
-// ===================== Инициализация данных =====================
+// ===================== Инициализация =====================
 async function loadInitialData() {
   highlightedBookingKey = null;
   const me = await apiFetch('/api/me').catch(() => ({ login: null, is_admin: false }));
@@ -136,14 +128,12 @@ function toggleSlotSelection(dateStr, hour, dateObj) {
   if (!currentUser) { showToast('Сначала авторизуйтесь'); return false; }
   if (!isAdminUser && !allUsers.includes(currentUser)) { showToast('Учётная запись ожидает подтверждения'); return false; }
   const key = `${dateStr}|${hour}`;
-  // Если слот уже был выбран – позволяем снять выделение в любом случае (даже если слот занят)
   if (selectedSlots.has(key)) {
     selectedSlots.delete(key);
     renderMainContent();
     updateInfoPanel();
     return true;
   }
-  // Если слот не выбран, но занят – не даём выбрать
   if (!isSlotFree(dateStr, hour, dateObj)) {
     showToast('Слот занят или в прошлом');
     return false;
@@ -164,18 +154,15 @@ async function bookSelectedSlots() {
   const body = { slots };
   if (isAdminUser && adminBookingTarget && adminBookingTarget !== currentUser) body.targetUser = adminBookingTarget;
 
-  // 1. Мгновенно снимаем выделение
   selectedSlots.clear();
   highlightedBookingKey = null;
   renderMainContent();
   updateInfoPanel();
 
-  // 2. Загружаем актуальные бронирования и проверяем, не заняты ли слоты
   try {
     const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
     allBookings = {};
     bookingsData.forEach(b => { allBookings[b.key] = b.login; });
-
     const hasConflict = slots.some(slotKey => !!allBookings[slotKey]);
     if (hasConflict) {
       showToast('Слоты уже заняты другим пользователем');
@@ -184,16 +171,12 @@ async function bookSelectedSlots() {
       updateHighlightedBooking();
       return;
     }
-  } catch (e) {
-    console.warn('Предварительная проверка не удалась, продолжаем бронирование');
-  }
+  } catch (e) { console.warn(e); }
 
-  // 3. Все свободны – отправляем запрос на бронирование
   try {
     const data = await apiFetch('/api/bookings', { method: 'POST', body: JSON.stringify(body) });
     showToast(data.message);
 
-    // Обновляем календарь и список
     const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
     allBookings = {};
     bookingsData.forEach(b => { allBookings[b.key] = b.login; });
@@ -227,24 +210,17 @@ async function bookSelectedSlots() {
       }
     }
 
-    if (data.created === 0) {
-      showToast('Слоты уже заняты другим пользователем');
-    }
-
+    if (data.created === 0) showToast('Слоты уже заняты другим пользователем');
     renderMainContent();
     updateInfoPanel();
     updateHighlightedBooking();
-
   } catch (e) {
-    console.error(e);
     showToast('Не удалось забронировать. Возможно, слот уже занят.');
-
     try {
       const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
       allBookings = {};
       bookingsData.forEach(b => { allBookings[b.key] = b.login; });
     } catch (ignored) {}
-
     renderMainContent();
     updateInfoPanel();
     updateHighlightedBooking();
@@ -275,14 +251,13 @@ async function cancelBooking(dateStr, hour) {
   } catch (e) {}
 }
 
-// ===================== Комментарии =====================
 async function loadComment(key) {
   const [date, hour] = key.split('|');
   try { return await apiFetch(`/api/comments/${date}/${hour}`, { method: 'GET' }); }
   catch(e) { return { text: '', lastEditedBy: null, lastEditedAt: null }; }
 }
 
-// ===================== Дополнительные функции (для админа) =====================
+// ===================== Админские утилиты =====================
 async function fetchUsersList() {
   if (!isAdminUser) return;
   const usersData = await apiFetch('/api/users', { method: 'GET' });
@@ -303,4 +278,11 @@ async function fetchPendingList() {
   if (!isAdminUser) return;
   pendingUsers = await apiFetch('/api/pending', { method: 'GET' });
   return pendingUsers;
+}
+
+// ===================== История бронирований =====================
+async function fetchBookingHistory(page = 1, search = '') {
+  const params = new URLSearchParams({ page, limit: 30 });
+  if (search) params.append('search', search);
+  return apiFetch(`/api/bookings/history?${params.toString()}`, { method: 'GET' });
 }

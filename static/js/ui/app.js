@@ -1,9 +1,5 @@
 // ===================== Сборка интерфейса и глобальные обработчики =====================
 
-/**
- * Генерирует весь HTML приложения и привязывает обработчики событий.
- * Должна вызываться после загрузки данных (loadInitialData) или при смене пользователя.
- */
 function renderFullApp() {
   const appContainer = document.getElementById('appContainer');
   appContainer.innerHTML = `
@@ -15,6 +11,7 @@ function renderFullApp() {
             👤 ${currentUser ? escapeHtml(getDisplayName(currentUser)) : 'Гость'} ${isAdminUser ? ' 👑' : ''}
           </div>
           ${isAdminUser ? `<button class="admin-users-btn" id="usersManageBtn">👥 Управление пользователями</button>` : ''}
+          ${currentUser ? `<button class="history-btn" id="historyBtn">📜 История</button>` : ''}
           ${currentUser ? `<button class="logout-btn" id="logoutBtn">🚪 Выйти</button>` : `<button class="auth-action-btn" id="authBtn">🔐 Авторизоваться</button>`}
         </div>
       </div>
@@ -67,7 +64,6 @@ function renderFullApp() {
       </div>
     </div>`;
 
-  // ===================== Навигация по дням =====================
   document.getElementById('prevDay')?.addEventListener('click', () => {
     let newDate = new Date(currentFocusDate);
     newDate.setDate(currentFocusDate.getDate() - 1);
@@ -88,7 +84,6 @@ function renderFullApp() {
     renderMainContent();
   });
 
-  // ===================== Бронирование =====================
   document.getElementById('bookBtn')?.addEventListener('click', bookSelectedSlots);
   document.getElementById('clearSelBtn')?.addEventListener('click', () => {
     selectedSlots.clear();
@@ -99,7 +94,6 @@ function renderFullApp() {
     showToast('Выбор очищен');
   });
 
-  // ===================== Профиль / выход / вход =====================
   if (currentUser) {
     document.getElementById('logoutBtn')?.addEventListener('click', logoutUser);
     document.getElementById('profileBtn')?.addEventListener('click', () => {
@@ -109,12 +103,10 @@ function renderFullApp() {
     document.getElementById('authBtn')?.addEventListener('click', showAuthModal);
   }
 
-  // ===================== Админские кнопки =====================
   if (isAdminUser) {
     document.getElementById('usersManageBtn')?.addEventListener('click', showUsersManagementModal);
     document.getElementById('selectUserBtn')?.addEventListener('click', showUserSelectModal);
 
-    // Фильтр бронирований
     document.getElementById('applyFilterBtn')?.addEventListener('click', () => {
       bookingFilterTerm = document.getElementById('bookingFilterInput')?.value || '';
       highlightedBookingKey = null;
@@ -142,7 +134,8 @@ function renderFullApp() {
     });
   }
 
-  // ===================== Глобальный клик для снятия выделения =====================
+  document.getElementById('historyBtn')?.addEventListener('click', showHistoryModal);
+
   document.addEventListener('click', function(e) {
     if (e.target.closest('button, a, input, textarea, .modal-overlay, .toast-msg')) return;
     if (e.target.closest('.slot-btn') || e.target.closest('.booking-item')) return;
@@ -154,7 +147,6 @@ function renderFullApp() {
     }
   });
 
-  // ===================== Наполнение содержимого =====================
   renderMainContent();
   renderBookingsList();
   updateInfoPanel();

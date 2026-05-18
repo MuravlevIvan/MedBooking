@@ -1,9 +1,5 @@
 // ===================== Список бронирований =====================
 
-/**
- * Загружает и отображает список бронирований (все или мои).
- * Использует кэш элементов для точечных обновлений.
- */
 async function renderBookingsList() {
   const container = document.getElementById('bookingsListContainer');
   const titleSpan = document.getElementById('bookingsTitle');
@@ -34,7 +30,6 @@ async function renderBookingsList() {
     bookings.sort((a,b) => a.date.localeCompare(b.date) || a.hour - b.hour);
 
     if (bookingElementsCache.size === 0 || container.children.length === 0) {
-      // Полное построение (первый запуск или после перезагрузки)
       container.innerHTML = '';
       bookingElementsCache.clear();
       for (const slot of bookings) {
@@ -49,7 +44,6 @@ async function renderBookingsList() {
         }
       }
     } else {
-      // Точечное обновление: скрываем/показываем и сортируем
       const visibleKeys = new Set(bookings.map(b => b.key));
       for (const [key, item] of bookingElementsCache) {
         if (!visibleKeys.has(key)) {
@@ -86,9 +80,6 @@ async function renderBookingsList() {
   updateHighlightedBooking();
 }
 
-/**
- * Обновляет информационную панель под календарём (счётчик выбранных слотов, текст кнопки).
- */
 function updateInfoPanel() {
   const infoDiv = document.getElementById('selectedSlotInfo'),
         bookBtn = document.getElementById('bookBtn');
@@ -111,4 +102,87 @@ function updateInfoPanel() {
     }
   }
   if (bookBtn) bookBtn.disabled = (!currentUser || (!isAdminUser && !allUsers.includes(currentUser)));
+}
+
+function createBookingItem(slot, commentText = null) {
+  const dateObj = new Date(slot.date);
+  const dayName = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
+  const timeStr = `${String(slot.hour).padStart(2,'0')}:00 - ${String(slot.hour+1).padStart(2,'0')}:00`;
+  const key = slot.key, owner = slot.login;
+  
+  const slotTime = new Date(slot.date); slotTime.setHours(slot.hour, 0, 0, 0);
+  const isPastSlot = slotTime < new Date();
+  const canEdit = isAdminUser || (owner === currentUser && !isPastSlot);
+
+  const item = document.createElement('div');
+  item.className = `booking-item ${isAdminUser ? 'admin-view' : ''}`;
+  item.setAttribute('data-key', key);
+  item.id = `booking-${key}`;
+
+  const hasComment = commentText && commentText.trim();
+  const displayText = hasComment ? escapeHtml(commentText) : '✏️ Кликните, чтобы добавить комментарий';
+
+  item.innerHTML = `
+    <div class="booking-header">
+      <div><span class="booking-time">${dayName}, ${timeStr}</span></div>
+      ${isAdminUser ? `<div class="booking-user">👤 ${getDisplayName(owner)} (${owner})</div>` : ''}
+    </div>
+    <div class="booking-comment ${!hasComment ? 'empty' : ''}" data-key="${key}" data-owner="${owner}" data-can-edit="${canEdit}">
+      ${displayText}
+    </div>
+    <div class="booking-footer">
+      <button class="cancel-booking-btn" data-date="${slot.date}" data-hour="${slot.hour}">❌ Отменить бронь</button>
+      <span class="edit-info"></span>
+    </div>`;
+
+  item.querySelector('.cancel-booking-btn')?.addEventListener('click', () => {
+    if (confirm('Отменить бронь?')) cancelBooking(slot.date, slot.hour);
+  });
+
+  const commentDiv = item.querySelector('.booking-comment');
+  if (commentDiv) {
+    commentDiv.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (commentDiv.dataset.canEdit === 'true') {
+        editingCommentKey = key;
+        highlightedBookingKey = key;
+        updateHighlightedBooking();
+        renderMainContent();
+        const curText = commentDiv.textContent.trim() === '✏️ Кликните, чтобы добавить комментарий' ? '' : commentDiv.textContent.trim();
+        enterEditMode(key, curText);
+      } else showToast('Вы не можете редактировать этот комментарий');
+    });
+  }
+
+  if (isAdminUser || owner === currentUser) {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('button, .booking-comment, .comment-edit-area, textarea')) return;
+      highlightBookingSlot(key);
+    });
+  }
+
+  return item;
+}
+
+function highlightBookingSlot(key) {
+  highlightedBookingKey = key;
+  selectedSlots.clear();
+  updateHighlightedBooking();
+  renderMainContent();
+  updateInfoPanel();
+}
+
+function updateHighlightedBooking() {
+  const container = document.getElementById('bookingsListContainer');
+  if (!container) return;
+  container.querySelectorAll('.booking-item.highlighted').forEach(el => el.classList.remove('highlighted'));
+  if (highlightedBookingKey) {
+    const targetElement = container.querySelector(`.booking-item[data-key="${cssEscape(highlightedBookingKey)}"]`);
+    if (targetElement) {
+      targetElement.classList.add('highlighted');
+      targetElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      highlightedBookingKey = null;
+    }
+  }
 }

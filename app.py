@@ -469,6 +469,96 @@ def cancel_booking(date, hour):
     socketio.emit('booking_updated', {})
     return jsonify({'message': 'Бронь отменена'})
 
+# ===================== НОВЫЙ ЭНДПОИНТ: ИСТОРИЯ БРОНИРОВАНИЙ =====================
+@app.route('/api/bookings/history')
+@login_required
+def get_booking_history():
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 30, type=int)
+    search = request.args.get('search', '').strip()
+    if page < 1:
+        page = 1
+    offset = (page - 1) * limit
+
+    db = get_db()
+    if is_admin():
+        # Базовый запрос для администратора
+        query = '''
+            SELECT b.slot_key, b.login, c.text as comment_text, c.last_edited_by, c.last_edited_at,
+                   u.first_name, u.last_name, u.middle_name
+            FROM bookings b
+            LEFT JOIN comments c ON b.slot_key = c.slot_key
+            LEFT JOIN users u ON b.login = u.login
+        '''
+        params = []
+        if search:
+            search_like = f'%{search}%'
+            query += ' WHERE (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
+            params = [search_like, search_like, search_like, search_like]
+
+        # Подсчёт общего количества (без пагинации)
+        count_sql = '''
+            SELECT COUNT(*) as cnt
+            FROM bookings b
+            LEFT JOIN users u ON b.login = u.login
+        '''
+        if search:
+            count_sql += ' WHERE (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
+        total = db.execute(count_sql, params).fetchone()['cnt']
+
+        query += ' ORDER BY substr(b.slot_key, 1, 10) DESC, CAST(substr(b.slot_key, 12) AS INTEGER) DESC'
+        query += ' LIMIT ? OFFSET ?'
+        params.extend([limit, offset])
+        rows = db.execute(query, params).fetchall()
+    else:
+        user = session['user']
+        rows = db.execute('''
+            SELECT b.slot_key, b.login, c.text as comment_text, c.last_edited_by, c.last_edited_at
+            FROM bookings b
+            LEFT JOIN comments c ON b.slot_key = c.slot_key
+            WHERE b.login = ?
+            ORDER BY substr(b.slot_key, 1, 10) DESC, CAST(substr(b.slot_key, 12) AS INTEGER) DESC
+            LIMIT ? OFFSET ?
+        ''', (user, limit, offset)).fetchall()
+        total = db.execute('SELECT COUNT(*) as cnt FROM bookings WHERE login = ?', (user,)).fetchone()['cnt']
+
+    bookings = []
+    now = datetime.now()
+    for row in rows:
+        key = row['slot_key']
+        date_str, hour_str = key.split('|')
+        hour = int(hour_str)
+        slot_dt = datetime.strptime(f"{date_str} {hour}:00", '%Y-%m-%d %H:%M')
+        is_past = slot_dt < now
+        comment_text = row['comment_text'] or ''
+
+        if is_admin():
+            name_parts = [row['last_name'], row['first_name'], row['middle_name']]
+            display_name = ' '.join(filter(None, name_parts)) or row['login']
+        else:
+            display_name = None
+
+        bookings.append({
+            'key': key,
+            'date': date_str,
+            'hour': hour,
+            'login': row['login'],
+            'comment': comment_text,
+            'lastEditedBy': row['last_edited_by'],
+            'lastEditedAt': row['last_edited_at'],
+            'displayName': display_name,
+            'isPast': is_past
+        })
+
+    pages = (total + limit - 1) // limit
+    return jsonify({
+        'bookings': bookings,
+        'total': total,
+        'page': page,
+        'pages': pages,
+        'limit': limit
+    })
+
 # ---------------------- API: Комментарии ----------------------
 @app.route('/api/comments/<date>/<int:hour>', methods=['GET'])
 def get_comment(date, hour):
@@ -489,6 +579,12 @@ def update_comment(date, hour):
         return jsonify({'error': 'Слот не забронирован'}), 404
     if not is_admin() and booking['login'] != session['user']:
         return jsonify({'error': 'Нет прав на редактирование'}), 403
+
+    # Проверка даты для обычного пользователя
+    if not is_admin():
+        slot_dt = datetime.strptime(f"{date} {hour}:00", '%Y-%m-%d %H:%M')
+        if slot_dt < datetime.now():
+            return jsonify({'error': 'Нельзя редактировать комментарий к прошедшему слоту'}), 403
 
     data = request.get_json()
     text = data.get('text', '')
