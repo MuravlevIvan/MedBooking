@@ -41,13 +41,14 @@ function showRegisterModal() {
           <button class="auth-modal-close" id="closeRegisterModal">✕</button>
         </div>
         <div class="auth-modal-body">
-          <div class="auth-field"><label>Логин *</label><input type="text" id="regLogin" placeholder="Латинские буквы, цифры, _"></div>
-          <div class="auth-field"><label>Пароль *</label><input type="password" id="regPassword" placeholder="Минимум 8 символов"></div>
-          <div class="auth-field"><label>Фамилия</label><input type="text" id="regLastName"></div>
-          <div class="auth-field"><label>Имя</label><input type="text" id="regFirstName"></div>
-          <div class="auth-field"><label>Отчество</label><input type="text" id="regMiddleName"></div>
-          <div class="auth-field"><label>Телефон</label><input type="tel" id="regPhone"></div>
-          <div class="auth-field"><label>Email</label><input type="email" id="regEmail" placeholder="example@mail.ru"></div>
+          <div class="subtitle">Войдите в систему для бронирования</div>
+          <div class="auth-field"><label>👤 Логин</label><input type="text" id="regLogin" placeholder="Латинские буквы, цифры, _"></div>
+          <div class="auth-field"><label>🔑 Пароль</label><input type="password" id="regPassword" placeholder="Минимум 8 символов"></div>
+          <div class="auth-field"><label>📛 Фамилия</label><input type="text" id="regLastName"></div>
+          <div class="auth-field"><label>👤 Имя</label><input type="text" id="regFirstName"></div>
+          <div class="auth-field"><label>👨‍👩‍👧 Отчество</label><input type="text" id="regMiddleName"></div>
+          <div class="auth-field"><label>📞 Телефон</label><input type="tel" id="regPhone"></div>
+          <div class="auth-field"><label>📧 Email</label><input type="email" id="regEmail" placeholder="example@mail.ru"></div>
           <div id="regError" class="auth-error"></div>
           <div class="modal-buttons">
             <button id="registerSubmitBtn" class="auth-login-btn">Отправить заявку</button>
@@ -212,304 +213,375 @@ function showEditUserModal(login) {
   });
 }
 
-// ===================== ИСТОРИЯ БРОНИРОВАНИЙ (с возможностью передачи начального поиска) =====================
+// ===================== ИСТОРИЯ БРОНИРОВАНИЙ (обновлённая версия) =====================
 let currentHistoryPage = 1;
 let currentHistorySearch = '';
+let _currentEditingData = null; // { div, cancelEdit, saveAndClose, textarea, currentText }
+let _historyOutsideHandler = null; // глобальный обработчик клика вне области редактирования
 
-async function showHistoryModal(initialSearch = '') {
-    if (!currentUser) {
-        showToast('Авторизуйтесь для просмотра истории');
-        showAuthModal();
-        return;
-    }
-    currentHistoryPage = 1;
-    currentHistorySearch = initialSearch || '';
-    const html = `
-        <div class="modal-overlay" id="historyModal">
-            <div class="history-modal">
-                <div class="history-header">
-                    <h2>📜 История бронирований</h2>
-                    <button class="history-close" id="historyCloseBtn">✕</button>
-                </div>
-                <div class="history-body" id="historyBody">
-                    <div style="text-align:center;">Загрузка...</div>
-                </div>
-            </div>
+async function showHistoryModal() {
+  if (!currentUser) {
+    showToast('Авторизуйтесь для просмотра истории');
+    showAuthModal();
+    return;
+  }
+  currentHistoryPage = 1;
+  currentHistorySearch = '';
+  const html = `
+    <div class="modal-overlay" id="historyModal">
+      <div class="history-modal">
+        <div class="history-header">
+          <h2>📜 История бронирований</h2>
+          <button class="history-close" id="historyCloseBtn">✕</button>
         </div>
-    `;
-    document.body.insertAdjacentHTML('beforeend', html);
-    document.getElementById('historyCloseBtn')?.addEventListener('click', () => {
+        <div class="history-body" id="historyBody">
+          <div style="text-align:center;">Загрузка...</div>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  
+  // Закрытие только по крестику (клик на оверлей игнорируется)
+  document.getElementById('historyCloseBtn')?.addEventListener('click', async () => {
+    if (_currentEditingData) {
+      const { textarea, currentText } = _currentEditingData;
+      if (textarea.value.trim() !== currentText.trim()) {
+        if (confirm('Есть несохранённые изменения. Закрыть окно?')) {
+          await closeCurrentEditing(false);
+          document.getElementById('historyModal')?.remove();
+        }
+      } else {
+        await closeCurrentEditing(false);
         document.getElementById('historyModal')?.remove();
-    });
-    document.getElementById('historyModal')?.addEventListener('click', (e) => {
-        if (e.target === e.currentTarget) e.currentTarget.remove();
-    });
-    await loadAndRenderHistory();
+      }
+    } else {
+      document.getElementById('historyModal')?.remove();
+    }
+  });
+  
+  // Клик на оверлей — ничего не делаем (окно не закрывается)
+  // Обработчик не добавляется
+  
+  await loadAndRenderHistory();
 }
 
 async function loadAndRenderHistory() {
-    const body = document.getElementById('historyBody');
-    if (!body) return;
-    body.innerHTML = '<div style="text-align:center;">Загрузка...</div>';
-    try {
-        const data = await fetchBookingHistory(currentHistoryPage, currentHistorySearch);
-        renderHistoryContent(data);
-    } catch (err) {
-        body.innerHTML = `<div style="color:red;text-align:center;">Ошибка загрузки: ${err.message}</div>`;
-    }
+  const body = document.getElementById('historyBody');
+  if (!body) return;
+  body.innerHTML = '<div style="text-align:center;">Загрузка...</div>';
+  try {
+    const data = await fetchBookingHistory(currentHistoryPage, currentHistorySearch);
+    renderHistoryContent(data);
+  } catch (err) {
+    body.innerHTML = `<div style="color:red;text-align:center;">Ошибка загрузки: ${err.message}</div>`;
+  }
 }
 
 function renderHistoryContent(data) {
-    const body = document.getElementById('historyBody');
-    if (!body) return;
-    const { bookings, page, pages } = data;
+  const body = document.getElementById('historyBody');
+  if (!body) return;
+  const { bookings, page, pages } = data;
 
-    if (!bookings.length) {
-        body.innerHTML = '<div style="text-align:center;padding:2rem;">✨ Нет бронирований</div>';
-        return;
-    }
+  if (!bookings.length) {
+    body.innerHTML = '<div style="text-align:center;padding:2rem;">✨ Нет бронирований</div>';
+    return;
+  }
 
-    let searchHtml = '';
-    if (isAdminUser) {
-        searchHtml = `
-            <div class="history-search">
-                <input type="text" id="historySearchInput" placeholder="Поиск по логину или ФИО..." value="${escapeHtml(currentHistorySearch)}">
-                <button id="historySearchBtn">🔍 Найти</button>
-                <button id="historyResetBtn">✖️ Сброс</button>
-            </div>
-        `;
-    }
-
-    const tableHeader = `
-        <table class="history-table">
-            <thead>
-                <tr><th>Дата и время</th>
-                    ${isAdminUser ? '<th>Пользователь</th>' : ''}
-                    <th>Комментарий</th>
-                </tr>
-            </thead>
-            <tbody id="historyTableBody"></tbody>
-        </table>
+  let searchHtml = '';
+  if (isAdminUser) {
+    searchHtml = `
+      <div class="history-search">
+        <input type="text" id="historySearchInput" placeholder="Поиск по логину или ФИО..." value="${escapeHtml(currentHistorySearch)}">
+        <button id="historySearchBtn">🔍 Найти</button>
+        <button id="historyResetBtn">✖️ Сброс</button>
+      </div>
     `;
+  }
 
-    body.innerHTML = `
-        ${searchHtml}
-        ${tableHeader}
-        <div class="history-pagination" id="historyPagination"></div>
+  const tableHeader = `
+    <table class="history-table">
+      <thead>
+        <tr><th>Дата и время</th>
+          ${isAdminUser ? '<th>Пользователь</th>' : ''}
+          <th>Комментарий</th>
+        </tr>
+      </thead>
+      <tbody id="historyTableBody"></tbody>
+    </table>
+  `;
+
+  body.innerHTML = `
+    ${searchHtml}
+    ${tableHeader}
+    <div class="history-pagination" id="historyPagination"></div>
+  `;
+
+  const tbody = document.getElementById('historyTableBody');
+  for (const booking of bookings) {
+    const dateObj = new Date(booking.date);
+    const dateStr = dateObj.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+    const timeStr = `${String(booking.hour).padStart(2,'0')}:00 - ${String(booking.hour+1).padStart(2,'0')}:00`;
+    const commentText = booking.comment || '';
+    const canEditComment = isAdminUser || (!booking.isPast && booking.login === currentUser);
+    const editInfo = booking.lastEditedBy ? `✏️ ${escapeHtml(booking.lastEditedBy)}, ${escapeHtml(booking.lastEditedAt)}` : '';
+
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td data-label="Дата">${dateStr}, ${timeStr}</td>
+      ${isAdminUser ? `<td data-label="Пользователь">${escapeHtml(booking.displayName || booking.login)}</td>` : ''}
+      <td data-label="Комментарий">
+        <div class="history-comment ${canEditComment ? 'editable' : 'disabled'}" data-key="${booking.key}" data-can-edit="${canEditComment}" data-login="${booking.login}" data-is-past="${booking.isPast}">
+          ${commentText ? escapeHtml(commentText) : '<em>Нет комментария</em>'}
+        </div>
+        <div class="edit-info-history">${editInfo}</div>
+      </td>
     `;
+    tbody.appendChild(row);
+  }
 
-    const tbody = document.getElementById('historyTableBody');
-    for (const booking of bookings) {
-        const dateObj = new Date(booking.date);
-        const dateStr = dateObj.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
-        const timeStr = `${String(booking.hour).padStart(2,'0')}:00 - ${String(booking.hour+1).padStart(2,'0')}:00`;
-        const commentText = booking.comment || '';
-        const canEditComment = isAdminUser || (!booking.isPast && booking.login === currentUser);
-        const editInfo = booking.lastEditedBy ? `✏️ ${escapeHtml(booking.lastEditedBy)}, ${escapeHtml(booking.lastEditedAt)}` : '';
+  // Обработчики поиска (админ)
+  if (isAdminUser) {
+    const searchInput = document.getElementById('historySearchInput');
+    const searchBtn = document.getElementById('historySearchBtn');
+    const resetBtn = document.getElementById('historyResetBtn');
+    if (searchBtn) searchBtn.addEventListener('click', () => {
+      currentHistorySearch = searchInput?.value.trim() || '';
+      currentHistoryPage = 1;
+      loadAndRenderHistory();
+    });
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+      if (searchInput) searchInput.value = '';
+      currentHistorySearch = '';
+      currentHistoryPage = 1;
+      loadAndRenderHistory();
+    });
+    if (searchInput) searchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        currentHistorySearch = searchInput.value.trim();
+        currentHistoryPage = 1;
+        loadAndRenderHistory();
+      }
+    });
+  }
 
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td data-label="Дата">${dateStr}, ${timeStr}</td>
-            ${isAdminUser ? `<td data-label="Пользователь">${escapeHtml(booking.displayName || booking.login)}</td>` : ''}
-            <td data-label="Комментарий">
-                <div class="history-comment ${canEditComment ? 'editable' : 'disabled'}" data-key="${booking.key}" data-can-edit="${canEditComment}" data-login="${booking.login}" data-is-past="${booking.isPast}">
-                    ${commentText ? escapeHtml(commentText) : '<em>Нет комментария</em>'}
-                </div>
-                <div class="edit-info-history">${editInfo}</div>
-            </td>
-        `;
-        tbody.appendChild(row);
+  // Пагинация
+  const paginationDiv = document.getElementById('historyPagination');
+  if (pages > 1) {
+    let paginationHtml = '';
+    paginationHtml += `<button ${page === 1 ? 'disabled' : ''} data-page="${page-1}">← Назад</button>`;
+    for (let i = 1; i <= pages; i++) {
+      if (i === 1 || i === pages || (i >= page-2 && i <= page+2)) {
+        paginationHtml += `<button class="${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+      } else if (i === page-3 || i === page+3) {
+        paginationHtml += `<span>...</span>`;
+      }
     }
-
-    // Обработчики поиска (админ)
-    if (isAdminUser) {
-        const searchInput = document.getElementById('historySearchInput');
-        const searchBtn = document.getElementById('historySearchBtn');
-        const resetBtn = document.getElementById('historyResetBtn');
-        if (searchBtn) searchBtn.addEventListener('click', () => {
-            currentHistorySearch = searchInput?.value.trim() || '';
-            currentHistoryPage = 1;
-            loadAndRenderHistory();
-        });
-        if (resetBtn) resetBtn.addEventListener('click', () => {
-            if (searchInput) searchInput.value = '';
-            currentHistorySearch = '';
-            currentHistoryPage = 1;
-            loadAndRenderHistory();
-        });
-        if (searchInput) searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                currentHistorySearch = searchInput.value.trim();
-                currentHistoryPage = 1;
-                loadAndRenderHistory();
-            }
-        });
-    }
-
-    // Пагинация
-    const paginationDiv = document.getElementById('historyPagination');
-    if (pages > 1) {
-        let paginationHtml = '';
-        paginationHtml += `<button ${page === 1 ? 'disabled' : ''} data-page="${page-1}">← Назад</button>`;
-        for (let i = 1; i <= pages; i++) {
-            if (i === 1 || i === pages || (i >= page-2 && i <= page+2)) {
-                paginationHtml += `<button class="${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
-            } else if (i === page-3 || i === page+3) {
-                paginationHtml += `<span>...</span>`;
-            }
+    paginationHtml += `<button ${page === pages ? 'disabled' : ''} data-page="${page+1}">Вперёд →</button>`;
+    paginationDiv.innerHTML = paginationHtml;
+    paginationDiv.querySelectorAll('button[data-page]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const newPage = parseInt(e.currentTarget.getAttribute('data-page'));
+        if (!isNaN(newPage) && newPage !== page) {
+          currentHistoryPage = newPage;
+          await loadAndRenderHistory();
         }
-        paginationHtml += `<button ${page === pages ? 'disabled' : ''} data-page="${page+1}">Вперёд →</button>`;
-        paginationDiv.innerHTML = paginationHtml;
-        paginationDiv.querySelectorAll('button[data-page]').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const newPage = parseInt(e.currentTarget.getAttribute('data-page'));
-                if (!isNaN(newPage) && newPage !== page) {
-                    currentHistoryPage = newPage;
-                    await loadAndRenderHistory();
-                }
-            });
-        });
-    }
+      });
+    });
+  }
 
-    attachHistoryCommentHandlers();
+  attachHistoryCommentHandlers();
 }
 
 function attachHistoryCommentHandlers() {
-    const commentDivs = document.querySelectorAll('#historyTableBody .history-comment.editable');
-    commentDivs.forEach(div => {
-        div.removeEventListener('click', historyCommentClickHandler);
-        div.addEventListener('click', historyCommentClickHandler);
-    });
+  const commentDivs = document.querySelectorAll('#historyTableBody .history-comment.editable');
+  commentDivs.forEach(div => {
+    div.removeEventListener('click', historyCommentClickHandler);
+    div.addEventListener('click', historyCommentClickHandler);
+  });
+}
+
+async function closeCurrentEditing(saveChanges) {
+  if (!_currentEditingData) return;
+  const { div, cancelEdit, saveAndClose, textarea, currentText } = _currentEditingData;
+  const newText = textarea.value;
+  if (saveChanges) {
+    if (newText.trim() !== currentText.trim()) {
+      await saveAndClose();
+    } else {
+      cancelEdit();
+    }
+  } else {
+    cancelEdit();
+  }
+  _currentEditingData = null;
+  // Удаляем глобальный обработчик клика вне области редактирования
+  if (_historyOutsideHandler) {
+    document.removeEventListener('click', _historyOutsideHandler);
+    _historyOutsideHandler = null;
+  }
 }
 
 async function historyCommentClickHandler(e) {
-    e.stopPropagation();
-    const div = e.currentTarget;
-    if (div.querySelector('.comment-edit-area-history')) return;
+  e.stopPropagation();
+  const div = e.currentTarget;
+  if (div.querySelector('.comment-edit-area-history')) return; // уже редактируется этот же
 
-    const key = div.getAttribute('data-key');
-    if (!key) {
-        showToast('Ошибка: ключ комментария не найден');
-        return;
+  // Если есть активное редактирование другого элемента – завершаем его с подтверждением
+  if (_currentEditingData && _currentEditingData.div !== div) {
+    const { textarea, currentText } = _currentEditingData;
+    const newText = textarea.value;
+    if (newText.trim() !== currentText.trim()) {
+      const answer = confirm('Есть несохранённые изменения в другом комментарии. Сохранить?');
+      if (answer) {
+        await closeCurrentEditing(true);
+      } else {
+        await closeCurrentEditing(false);
+      }
+    } else {
+      await closeCurrentEditing(false);
+    }
+  }
+
+  const key = div.getAttribute('data-key');
+  if (!key) {
+    showToast('Ошибка: ключ комментария не найден');
+    return;
+  }
+
+  const canEdit = div.getAttribute('data-can-edit') === 'true';
+  if (!canEdit) {
+    showToast('Вы не можете редактировать этот комментарий');
+    return;
+  }
+
+  let currentText = div.innerText.trim();
+  if (currentText === 'Нет комментария') currentText = '';
+
+  const originalHtml = div.innerHTML;
+  const ownerLogin = div.getAttribute('data-login');
+  const isPast = div.getAttribute('data-is-past') === 'true';
+
+  const editArea = document.createElement('div');
+  editArea.className = 'comment-edit-area-history';
+  editArea.innerHTML = `
+    <textarea class="comment-textarea-history">${escapeHtml(currentText)}</textarea>
+    <div class="comment-buttons-history">
+      <button class="comment-save-btn-history">💾 Сохранить</button>
+      <button class="comment-cancel-btn-history">❌ Отмена</button>
+    </div>
+  `;
+  div.innerHTML = '';
+  div.appendChild(editArea);
+  const textarea = editArea.querySelector('textarea');
+  const saveBtn = editArea.querySelector('.comment-save-btn-history');
+  const cancelBtn = editArea.querySelector('.comment-cancel-btn-history');
+
+  const cancelEdit = () => {
+    div.innerHTML = originalHtml;
+    div.classList.add('editable');
+    div.removeEventListener('click', historyCommentClickHandler);
+    div.addEventListener('click', historyCommentClickHandler);
+    _currentEditingData = null;
+    // Удаляем глобальный обработчик
+    if (_historyOutsideHandler) {
+      document.removeEventListener('click', _historyOutsideHandler);
+      _historyOutsideHandler = null;
+    }
+  };
+
+  const saveCommentHandler = async () => {
+    const newText = textarea.value;
+    if (newText.trim() === currentText.trim()) {
+      cancelEdit();
+      return;
     }
 
-    const canEdit = div.getAttribute('data-can-edit') === 'true';
-    if (!canEdit) {
-        showToast('Вы не можете редактировать этот комментарий');
-        return;
+    const [date, hour] = key.split('|');
+    if (!date || hour === undefined) {
+      showToast('Ошибка: некорректный ключ слота');
+      cancelEdit();
+      return;
     }
 
-    let currentText = div.innerText.trim();
-    if (currentText === 'Нет комментария') currentText = '';
+    try {
+      const result = await apiFetch(`/api/comments/${date}/${hour}`, {
+        method: 'PUT',
+        body: JSON.stringify({ text: newText })
+      });
+      showToast(result.message || 'Комментарий сохранён');
 
-    const originalHtml = div.innerHTML;
-    const ownerLogin = div.getAttribute('data-login');
-    const isPast = div.getAttribute('data-is-past') === 'true';
+      const commentData = await loadComment(key);
+      const displayText = commentData.text || '';
+      const editInfoText = commentData.lastEditedBy ? `✏️ ${escapeHtml(commentData.lastEditedBy)}, ${escapeHtml(commentData.lastEditedAt)}` : '';
 
-    const editArea = document.createElement('div');
-    editArea.className = 'comment-edit-area-history';
-    editArea.innerHTML = `
-        <textarea class="comment-textarea-history">${escapeHtml(currentText)}</textarea>
-        <div class="comment-buttons-history">
-            <button class="comment-save-btn-history">💾 Сохранить</button>
-            <button class="comment-cancel-btn-history">❌ Отмена</button>
-        </div>
-    `;
-    div.innerHTML = '';
-    div.appendChild(editArea);
-    const textarea = editArea.querySelector('textarea');
-    const saveBtn = editArea.querySelector('.comment-save-btn-history');
-    const cancelBtn = editArea.querySelector('.comment-cancel-btn-history');
+      const canEditAfter = isAdminUser || (!isPast && ownerLogin === currentUser);
 
-    const cancelEdit = () => {
-        if (window._historyOutsideHandler) {
-            document.removeEventListener('click', window._historyOutsideHandler);
-            delete window._historyOutsideHandler;
+      const row = div.closest('tr');
+      const commentsCell = row.querySelector('td:last-child');
+      if (commentsCell) {
+        commentsCell.innerHTML = `
+          <div class="history-comment ${canEditAfter ? 'editable' : 'disabled'}" data-key="${key}" data-can-edit="${canEditAfter}" data-login="${ownerLogin}" data-is-past="${isPast}">
+            ${displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'}
+          </div>
+          <div class="edit-info-history">${editInfoText}</div>
+        `;
+        const newCommentDiv = commentsCell.querySelector('.history-comment');
+        if (newCommentDiv && newCommentDiv.classList.contains('editable')) {
+          newCommentDiv.addEventListener('click', historyCommentClickHandler);
         }
-        div.innerHTML = originalHtml;
-        div.classList.add('editable');
-        div.removeEventListener('click', historyCommentClickHandler);
-        div.addEventListener('click', historyCommentClickHandler);
-    };
+      }
+    } catch (err) {
+      showToast(err.message || 'Ошибка сохранения');
+    }
+    cancelEdit(); // завершаем режим редактирования (удаляем глобальный обработчик)
+  };
 
-    const saveCommentHandler = async () => {
-        const newText = textarea.value;
-        if (newText.trim() === currentText.trim()) {
-            cancelEdit();
-            return;
-        }
-
-        const [date, hour] = key.split('|');
-        if (!date || hour === undefined) {
-            showToast('Ошибка: некорректный ключ слота');
-            cancelEdit();
-            return;
-        }
-
-        try {
-            const result = await apiFetch(`/api/comments/${date}/${hour}`, {
-                method: 'PUT',
-                body: JSON.stringify({ text: newText })
-            });
-            showToast(result.message || 'Комментарий сохранён');
-
-            const commentData = await loadComment(key);
-            const displayText = commentData.text || '';
-            const editInfoText = commentData.lastEditedBy ? `✏️ ${escapeHtml(commentData.lastEditedBy)}, ${escapeHtml(commentData.lastEditedAt)}` : '';
-            const canEditAfter = isAdminUser || (!isPast && ownerLogin === currentUser);
-
-            const row = div.closest('tr');
-            const commentsCell = row.querySelector('td:last-child');
-            if (commentsCell) {
-                commentsCell.innerHTML = `
-                    <div class="history-comment ${canEditAfter ? 'editable' : 'disabled'}" data-key="${key}" data-can-edit="${canEditAfter}" data-login="${ownerLogin}" data-is-past="${isPast}">
-                        ${displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'}
-                    </div>
-                    <div class="edit-info-history">${editInfoText}</div>
-                `;
-                const newCommentDiv = commentsCell.querySelector('.history-comment');
-                if (newCommentDiv && newCommentDiv.classList.contains('editable')) {
-                    newCommentDiv.addEventListener('click', historyCommentClickHandler);
-                }
-            }
-        } catch (err) {
-            showToast(err.message || 'Ошибка сохранения');
-        }
-        if (window._historyOutsideHandler) {
-            document.removeEventListener('click', window._historyOutsideHandler);
-            delete window._historyOutsideHandler;
-        }
-    };
-
-    const outsideClickHandler = (event) => {
-        if (editArea && editArea.contains(event.target)) return;
-        if (event.target.closest('.comment-save-btn-history') || event.target.closest('.comment-cancel-btn-history')) return;
-        const newText = textarea.value;
-        if (newText.trim() === currentText.trim()) {
-            cancelEdit();
-        } else {
-            if (confirm('Комментарий не сохранён. Сохранить?')) {
-                saveCommentHandler();
-            } else {
-                cancelEdit();
-            }
-        }
-    };
-
-    saveBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+  // Глобальный обработчик клика вне области редактирования
+  const outsideClickHandler = (event) => {
+    // Если клик внутри editArea или на кнопках — игнорируем
+    if (editArea && editArea.contains(event.target)) return;
+    if (event.target.closest('.comment-save-btn-history') || event.target.closest('.comment-cancel-btn-history')) return;
+    // Если клик на другом редактируемом комментарии — не обрабатываем здесь, так как переключение уже обработано выше
+    if (event.target.closest('.history-comment.editable')) return;
+    
+    // Клик вне области редактирования
+    const newText = textarea.value;
+    if (newText.trim() !== currentText.trim()) {
+      // Если текст изменён, спрашиваем
+      if (confirm('Сохранить изменения?')) {
         saveCommentHandler();
-    });
-    cancelBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+      } else {
         cancelEdit();
-    });
-
-    if (window._historyOutsideHandler) {
-        document.removeEventListener('click', window._historyOutsideHandler);
+      }
+    } else {
+      // Если текст не изменён, просто закрываем
+      cancelEdit();
     }
-    window._historyOutsideHandler = outsideClickHandler;
-    document.addEventListener('click', window._historyOutsideHandler);
+  };
 
-    textarea.focus();
+  saveBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    saveCommentHandler();
+  });
+  cancelBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cancelEdit();
+  });
+
+  // Удаляем предыдущий обработчик, если был
+  if (_historyOutsideHandler) {
+    document.removeEventListener('click', _historyOutsideHandler);
+  }
+  _historyOutsideHandler = outsideClickHandler;
+  document.addEventListener('click', _historyOutsideHandler);
+
+  _currentEditingData = {
+    div,
+    cancelEdit,
+    saveAndClose: saveCommentHandler,
+    textarea,
+    currentText
+  };
+
+  textarea.focus();
 }
