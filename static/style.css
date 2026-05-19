@@ -686,6 +686,70 @@ body {
     border-radius: 2rem; font-weight: 600; color: white; cursor: pointer;
 }
 /* Для обычного пользователя (не админа) – ширина первой колонки (дата) 1% */
+/* Стили для управления врачами (админ) */
+.doctor-tab-wrapper {
+    display: inline-flex;
+    align-items: center;
+    background: #e2e8f0;
+    border-radius: 2rem;
+    margin-right: 0.3rem;
+    position: relative;
+}
+.doctor-tab-wrapper.active {
+    background: #3b82f6;
+}
+.doctor-tab-wrapper .doctor-tab {
+    background: transparent;
+    border: none;
+    padding: 0.5rem 0.8rem 0.5rem 1.2rem;
+    border-radius: 2rem 0 0 2rem;
+    color: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.doctor-tab-wrapper.active .doctor-tab {
+    color: white;
+}
+.doctor-edit-btn, .doctor-delete-btn {
+    background: transparent;
+    border: none;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0 0.3rem;
+    opacity: 0.7;
+    transition: 0.2s;
+}
+.doctor-edit-btn:hover, .doctor-delete-btn:hover {
+    opacity: 1;
+    transform: scale(1.05);
+}
+.doctor-delete-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.doctor-add-btn {
+    background: #cbd5e1;
+    border: none;
+    border-radius: 2rem;
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 0.5rem;
+    transition: 0.2s;
+}
+.doctor-add-btn:hover {
+    background: #a0aec0;
+}
+@media (max-width: 700px) {
+    .doctor-tab-wrapper {
+        margin: 0.2rem;
+    }
+    .doctor-edit-btn, .doctor-delete-btn {
+        font-size: 0.7rem;
+        padding: 0 0.2rem;
+    }
+}
 .doctor-tabs {
     display: flex;
     gap: 0.5rem;

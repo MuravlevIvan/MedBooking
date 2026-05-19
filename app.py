@@ -3,6 +3,7 @@ import traceback
 from datetime import datetime
 from functools import wraps
 from dotenv import load_dotenv
+import uuid                     # <-- добавлено для уникальных id врачей
 
 from flask import Flask, request, jsonify, session, send_from_directory, g
 from flask_socketio import SocketIO, emit
@@ -632,12 +633,66 @@ def update_comment(date, hour):
     socketio.emit('comment_updated', {'slot_key': key, 'doctor': doctor})
     return jsonify({'message': 'Комментарий сохранён'})
 
-# ---------------------- API: Список врачей ----------------------
+# ---------------------- API: Список врачей (CRUD для админа) ----------------------
 @app.route('/api/doctors', methods=['GET'])
 def get_doctors():
     db = get_db()
     rows = db.execute('SELECT id, name FROM doctors ORDER BY display_order').fetchall()
     return jsonify([{'id': row['id'], 'name': row['name']} for row in rows])
+
+@app.route('/api/doctors', methods=['POST'])
+@login_required
+def create_doctor():
+    if not is_admin():
+        return jsonify({'error': 'Доступ запрещён'}), 403
+    data = request.get_json()
+    name = data.get('name', '').strip()
+    if not name:
+        return jsonify({'error': 'Название врача не может быть пустым'}), 400
+
+    db = get_db()
+    max_order = db.execute('SELECT COALESCE(MAX(display_order), 0) FROM doctors').fetchone()[0]
+    new_order = max_order + 1
+    new_id = f"doctor_{uuid.uuid4().hex[:12]}"   # уникальный id
+    db.execute('INSERT INTO doctors (id, name, display_order) VALUES (?, ?, ?)',
+               (new_id, name, new_order))
+    db.commit()
+    socketio.emit('doctors_updated', {})
+    return jsonify({'id': new_id, 'name': name, 'display_order': new_order})
+
+@app.route('/api/doctors/<doctor_id>', methods=['PUT'])
+@login_required
+def update_doctor(doctor_id):
+    if not is_admin():
+        return jsonify({'error': 'Доступ запрещён'}), 403
+    data = request.get_json()
+    new_name = data.get('name', '').strip()
+    if not new_name:
+        return jsonify({'error': 'Название не может быть пустым'}), 400
+
+    db = get_db()
+    db.execute('UPDATE doctors SET name = ? WHERE id = ?', (new_name, doctor_id))
+    db.commit()
+    socketio.emit('doctors_updated', {})
+    return jsonify({'message': 'Врач переименован'})
+
+@app.route('/api/doctors/<doctor_id>', methods=['DELETE'])
+@login_required
+def delete_doctor(doctor_id):
+    if not is_admin():
+        return jsonify({'error': 'Доступ запрещён'}), 403
+    db = get_db()
+    count = db.execute('SELECT COUNT(*) FROM doctors').fetchone()[0]
+    if count <= 1:
+        return jsonify({'error': 'Нельзя удалить единственного врача'}), 400
+
+    # Каскадное удаление записей о бронированиях и комментариях
+    db.execute('DELETE FROM comments WHERE doctor = ?', (doctor_id,))
+    db.execute('DELETE FROM bookings WHERE doctor = ?', (doctor_id,))
+    db.execute('DELETE FROM doctors WHERE id = ?', (doctor_id,))
+    db.commit()
+    socketio.emit('doctors_updated', {})
+    return jsonify({'message': 'Врач удалён'})
 
 # ---------------------- Главная страница ----------------------
 @app.route('/')

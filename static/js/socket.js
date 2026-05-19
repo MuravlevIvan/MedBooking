@@ -67,3 +67,14 @@ socket.on('comment_updated', (data) => {
         });
     }
 });
+
+// Новый обработчик: обновление списка врачей
+socket.on('doctors_updated', async () => {
+    await loadDoctors();
+    // Если текущий врач был удалён – переключиться на первого доступного
+    if (!doctorsList.some(d => d.id === currentDoctor)) {
+        currentDoctor = doctorsList[0]?.id || 'doctor1';
+    }
+    renderFullApp();
+    await loadBookingsForDoctor(currentDoctor);
+});

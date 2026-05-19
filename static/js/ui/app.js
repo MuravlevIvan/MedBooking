@@ -2,12 +2,26 @@
 function renderFullApp() {
   const appContainer = document.getElementById('appContainer');
   
-  // Генерация вкладок врачей
-  const doctorsHtml = doctorsList.map(doc => `
-    <button class="doctor-tab ${currentDoctor === doc.id ? 'active' : ''}" data-doctor="${doc.id}">
-      ${escapeHtml(doc.name)}
-    </button>
-  `).join('');
+  // Генерация вкладок врачей с возможностью редактирования для админа
+  let doctorsHtml = '';
+  if (isAdminUser) {
+    doctorsHtml = doctorsList.map(doc => `
+      <div class="doctor-tab-wrapper ${currentDoctor === doc.id ? 'active' : ''}">
+        <button class="doctor-tab" data-doctor="${doc.id}">
+          <span class="doctor-name">${escapeHtml(doc.name)}</span>
+        </button>
+        <button class="doctor-edit-btn" data-id="${doc.id}" title="Переименовать">✏️</button>
+        <button class="doctor-delete-btn" data-id="${doc.id}" title="Удалить" ${doctorsList.length === 1 ? 'disabled' : ''}>🗑️</button>
+      </div>
+    `).join('');
+    doctorsHtml += `<button class="doctor-add-btn" id="addDoctorBtn" title="Добавить врача">➕</button>`;
+  } else {
+    doctorsHtml = doctorsList.map(doc => `
+      <button class="doctor-tab ${currentDoctor === doc.id ? 'active' : ''}" data-doctor="${doc.id}">
+        ${escapeHtml(doc.name)}
+      </button>
+    `).join('');
+  }
 
   appContainer.innerHTML = `
     <div class="main-card">
@@ -141,7 +155,7 @@ function renderFullApp() {
   }
   document.getElementById('historyBtn')?.addEventListener('click', () => showHistoryModal());
 
-  // Обработчики вкладок врачей
+  // Обработчики вкладок врачей (переключение)
   document.querySelectorAll('.doctor-tab').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       const doctorId = btn.dataset.doctor;
@@ -151,13 +165,86 @@ function renderFullApp() {
       highlightedBookingKey = null;
       editingCommentKey = null;
       await loadBookingsForDoctor(currentDoctor);
-      document.querySelectorAll('.doctor-tab').forEach(t => t.classList.remove('active'));
-      btn.classList.add('active');
+      document.querySelectorAll('.doctor-tab-wrapper, .doctor-tab').forEach(t => {
+        if (t.classList) t.classList.remove('active');
+        else if (t.parentElement) t.parentElement.classList.remove('active');
+      });
+      if (btn.parentElement && btn.parentElement.classList) btn.parentElement.classList.add('active');
+      else btn.classList.add('active');
       updateInfoPanel();
       renderMainContent();
       renderBookingsList();
     });
   });
+
+  // Обработчики для админских кнопок управления врачами
+  if (isAdminUser) {
+    // Переименование
+    document.querySelectorAll('.doctor-edit-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const currentName = doctorsList.find(d => d.id === id)?.name || '';
+        const newName = prompt('Введите новое имя врача:', currentName);
+        if (newName && newName.trim()) {
+          try {
+            await updateDoctor(id, newName.trim());
+            await loadDoctors();
+            if (!doctorsList.some(d => d.id === currentDoctor)) {
+              currentDoctor = doctorsList[0]?.id || 'doctor1';
+            }
+            renderFullApp();
+            await loadBookingsForDoctor(currentDoctor);
+          } catch (err) {
+            showToast(err.message);
+          }
+        }
+      });
+    });
+    // Удаление
+    document.querySelectorAll('.doctor-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        if (doctorsList.length <= 1) {
+          showToast('Нельзя удалить единственного врача');
+          return;
+        }
+        if (confirm(`Удалить врача "${doctorsList.find(d => d.id === id)?.name}"? Все его бронирования и комментарии будут удалены.`)) {
+          try {
+            await deleteDoctor(id);
+            await loadDoctors();
+            if (!doctorsList.some(d => d.id === currentDoctor)) {
+              currentDoctor = doctorsList[0]?.id || 'doctor1';
+            }
+            renderFullApp();
+            await loadBookingsForDoctor(currentDoctor);
+          } catch (err) {
+            showToast(err.message);
+          }
+        }
+      });
+    });
+    // Добавление врача
+    const addBtn = document.getElementById('addDoctorBtn');
+    if (addBtn) {
+      addBtn.addEventListener('click', async () => {
+        const name = prompt('Введите имя нового врача:', 'Новый врач');
+        if (name && name.trim()) {
+          try {
+            await createDoctor(name.trim());
+            await loadDoctors();
+            // Переключаемся на нового врача (он последний в списке)
+            currentDoctor = doctorsList[doctorsList.length - 1]?.id || currentDoctor;
+            renderFullApp();
+            await loadBookingsForDoctor(currentDoctor);
+          } catch (err) {
+            showToast(err.message);
+          }
+        }
+      });
+    }
+  }
 
   document.addEventListener('click', function(e) {
     if (e.target.closest('button, a, input, textarea, .modal-overlay, .toast-msg')) return;

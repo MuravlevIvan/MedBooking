@@ -31,11 +31,13 @@ async function apiFetch(url, options = {}) {
 // Загрузка списка врачей
 async function loadDoctors() {
   try {
-    doctorsList = await apiFetch('/api/doctors');
+    const data = await apiFetch('/api/doctors');
+    doctorsList = data;
     if (!doctorsList.length) doctorsList = [{id:'doctor1',name:'Врач 1'},{id:'doctor2',name:'Врач 2'},{id:'doctor3',name:'Врач 3'}];
   } catch(e) {
     doctorsList = [{id:'doctor1',name:'Врач 1'},{id:'doctor2',name:'Врач 2'},{id:'doctor3',name:'Врач 3'}];
   }
+  return doctorsList;
 }
 
 // Загрузка бронирований для конкретного врача
@@ -264,4 +266,23 @@ async function fetchBookingHistory(page = 1, search = '') {
   const params = new URLSearchParams({ page, limit: 30, doctor: currentDoctor });
   if (search) params.append('search', search);
   return apiFetch(`/api/bookings/history?${params.toString()}`, { method: 'GET' });
+}
+
+// ========== Новые функции для управления врачами ==========
+async function createDoctor(name) {
+  return apiFetch('/api/doctors', {
+    method: 'POST',
+    body: JSON.stringify({ name })
+  });
+}
+
+async function updateDoctor(id, name) {
+  return apiFetch(`/api/doctors/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name })
+  });
+}
+
+async function deleteDoctor(id) {
+  return apiFetch(`/api/doctors/${id}`, { method: 'DELETE' });
 }
