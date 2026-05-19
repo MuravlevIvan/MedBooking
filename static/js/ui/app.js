@@ -128,25 +128,49 @@ function renderFullApp() {
       </div>
     </div>`;
 
-  // Обработчики навигации
-  document.getElementById('prevDay')?.addEventListener('click', () => {
-    let newDate = new Date(currentFocusDate);
-    newDate.setDate(currentFocusDate.getDate() - 1);
-    if (normalizeDate(newDate) < normalizeDate(new Date())) {
-      showToast('Нельзя вернуться в прошлое');
-      return;
-    }
-    currentFocusDate = newDate;
-    highlightedBookingKey = null;
-    updateHighlightedBooking();
-    renderMainContent();
-  });
-  document.getElementById('nextDay')?.addEventListener('click', () => {
-    currentFocusDate.setDate(currentFocusDate.getDate() + 1);
-    highlightedBookingKey = null;
-    updateHighlightedBooking();
-    renderMainContent();
-  });
+  // Обработчики навигации с учётом типа дорожки
+  const prevBtn = document.getElementById('prevDay');
+  const nextBtn = document.getElementById('nextDay');
+  if (prevBtn) {
+    prevBtn.addEventListener('click', () => {
+      const doctor = doctorsList.find(d => d.id === currentDoctor);
+      const isDaily = doctor?.bookingType === 'daily';
+      const step = isDaily ? 28 : 1;
+      let newDate = new Date(currentFocusDate);
+      newDate.setDate(currentFocusDate.getDate() - step);
+      // Запрет на уход в прошлое для daily – проверяем последний день диапазона
+      const todayNorm = normalizeDate(new Date());
+      if (isDaily) {
+        const lastDayOfRange = new Date(newDate);
+        lastDayOfRange.setDate(newDate.getDate() + 27);
+        if (lastDayOfRange < todayNorm) {
+          showToast('Нельзя уходить в прошлое');
+          return;
+        }
+      } else {
+        if (normalizeDate(newDate) < todayNorm) {
+          showToast('Нельзя вернуться в прошлое');
+          return;
+        }
+      }
+      currentFocusDate = newDate;
+      highlightedBookingKey = null;
+      updateHighlightedBooking();
+      renderMainContent();
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', () => {
+      const doctor = doctorsList.find(d => d.id === currentDoctor);
+      const isDaily = doctor?.bookingType === 'daily';
+      const step = isDaily ? 28 : 1;
+      currentFocusDate.setDate(currentFocusDate.getDate() + step);
+      highlightedBookingKey = null;
+      updateHighlightedBooking();
+      renderMainContent();
+    });
+  }
+
   document.getElementById('bookBtn')?.addEventListener('click', bookSelectedSlots);
   document.getElementById('clearSelBtn')?.addEventListener('click', () => {
     selectedSlots.clear();
@@ -242,7 +266,6 @@ function renderFullApp() {
         showEditDoctorModal(id);
       });
     });
-    // Обработчик удаления дорожки с защитой doctor1
     document.querySelectorAll('.doctor-delete-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();

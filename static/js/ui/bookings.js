@@ -100,18 +100,26 @@ function updateInfoPanel() {
 function createBookingItem(slot, commentText = null) {
   const doctor = doctorsList.find(d => d.id === currentDoctor);
   const slotInterval = doctor?.slotInterval || 60;
+  const isDaily = (slot.time === '00:00') && (doctor?.bookingType === 'daily');
   
   const dateObj = new Date(slot.date);
   const dayName = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
-  const [hour, minute] = slot.time.split(':').map(Number);
-  const nextTime = new Date(dateObj);
-  nextTime.setHours(hour, minute, 0, 0);
-  nextTime.setMinutes(nextTime.getMinutes() + slotInterval);
-  const timeEndStr = `${String(nextTime.getHours()).padStart(2,'0')}:${String(nextTime.getMinutes()).padStart(2,'0')}`;
-  const timeStr = `${slot.time} – ${timeEndStr}`;
-  const key = slot.key, owner = slot.login;
   
+  let timeDisplay;
+  if (isDaily) {
+    timeDisplay = '🏡 Весь день';
+  } else {
+    const [hour, minute] = slot.time.split(':').map(Number);
+    const nextTime = new Date(dateObj);
+    nextTime.setHours(hour, minute, 0, 0);
+    nextTime.setMinutes(nextTime.getMinutes() + slotInterval);
+    const timeEndStr = `${String(nextTime.getHours()).padStart(2,'0')}:${String(nextTime.getMinutes()).padStart(2,'0')}`;
+    timeDisplay = `${slot.time} – ${timeEndStr}`;
+  }
+  
+  const key = slot.key, owner = slot.login;
   const slotTime = new Date(slot.date);
+  const [hour, minute] = slot.time.split(':').map(Number);
   slotTime.setHours(hour, minute, 0, 0);
   const isPastSlot = slotTime < new Date();
   const canEdit = isAdminUser || (owner === currentUser && !isPastSlot);
@@ -126,7 +134,7 @@ function createBookingItem(slot, commentText = null) {
 
   item.innerHTML = `
     <div class="booking-header">
-      <div><span class="booking-time">${dayName}, ${timeStr}</span></div>
+      <div><span class="booking-time">${dayName}, ${timeDisplay}</span></div>
       ${isAdminUser ? `<div class="booking-user" data-login="${owner}" style="cursor:pointer;" title="Нажмите для просмотра истории пользователя">👤 ${getDisplayName(owner)} (${owner})</div>` : ''}
     </div>
     <div class="booking-comment ${!hasComment ? 'empty' : ''}" data-key="${key}" data-owner="${owner}" data-can-edit="${canEdit}">
@@ -168,7 +176,7 @@ function createBookingItem(slot, commentText = null) {
       userDiv.addEventListener('click', (e) => {
         e.stopPropagation();
         const login = userDiv.getAttribute('data-login');
-        if (login) showHistoryModal(login, '');   // второй аргумент – все врачи
+        if (login) showHistoryModal(login, '');
       });
     }
   }

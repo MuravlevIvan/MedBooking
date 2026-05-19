@@ -213,13 +213,14 @@ function showEditUserModal(login) {
   });
 }
 
-// ---------- Редактирование врача (админ) ----------
+// ---------- Редактирование врача (админ) – с выбором типа бронирования ----------
 function showEditDoctorModal(doctorId) {
   const doctor = doctorsList.find(d => d.id === doctorId);
   if (!doctor) return;
   
   const breakStart = doctor.breakStart || '';
   const breakEnd = doctor.breakEnd || '';
+  const bookingType = doctor.bookingType || 'time_slots';
   
   const html = `
     <div class="modal-overlay" id="editDoctorModal">
@@ -227,6 +228,12 @@ function showEditDoctorModal(doctorId) {
         <div class="edit-user-header"><button class="edit-close-icon" id="closeDoctorModalIcon">✕</button><h3>✏️ Редактирование дорожки</h3></div>
         <div class="edit-user-body">
           <div class="edit-field"><label>🏥 Название дорожки</label><input type="text" id="doctorName" value="${escapeHtml(doctor.name)}"></div>
+          <div class="edit-field"><label>📆 Тип бронирования</label>
+            <select id="doctorBookingType">
+              <option value="time_slots" ${bookingType === 'time_slots' ? 'selected' : ''}>⏱ Почасовые слоты</option>
+              <option value="daily" ${bookingType === 'daily' ? 'selected' : ''}>🏡 Целый день (домик/беседка)</option>
+            </select>
+          </div>
           <div class="edit-field"><label>⏱ Интервал слотов (мин)</label>
             <select id="doctorSlotInterval">
               <option value="10" ${doctor.slotInterval === 10 ? 'selected' : ''}>10 минут</option>
@@ -264,6 +271,7 @@ function showEditDoctorModal(doctorId) {
   document.getElementById('cancelDoctorBtn')?.addEventListener('click', () => modal.remove());
   document.getElementById('saveDoctorBtn')?.addEventListener('click', async () => {
     const newName = document.getElementById('doctorName').value.trim();
+    const newBookingType = document.getElementById('doctorBookingType').value;
     const newInterval = parseInt(document.getElementById('doctorSlotInterval').value);
     const newStart = parseInt(document.getElementById('doctorStartHour').value);
     const newEnd = parseInt(document.getElementById('doctorEndHour').value);
@@ -283,7 +291,8 @@ function showEditDoctorModal(doctorId) {
         startHour: newStart,
         endHour: newEnd,
         breakStart: breakStart,
-        breakEnd: breakEnd
+        breakEnd: breakEnd,
+        bookingType: newBookingType
       });
       await loadDoctors();
       if (currentDoctor === doctorId) {
@@ -311,10 +320,11 @@ let _currentEditingData = null;
 let _currentAdminEditingData = null;
 let _historyOutsideHandler = null;
 
-async function fetchAdminMeetingData(date, time) {
+// ИСПРАВЛЕНО: добавлен параметр doctor
+async function fetchAdminMeetingData(date, time, doctor = currentDoctor) {
     if (!isAdminUser) return null;
     try {
-        return await apiFetch(`/api/admin/meeting/${date}/${time}?doctor=${currentDoctor}`);
+        return await apiFetch(`/api/admin/meeting/${date}/${time}?doctor=${doctor}`);
     } catch(e) {
         console.warn(e);
         return { adminComment: '', successMeeting: false };
@@ -499,7 +509,7 @@ function renderHistoryContent(data) {
     cell = row.insertCell(); cell.setAttribute('data-label', 'Комментарий пользователя'); cell.className = 'user-comment-cell'; cell.dataset.key = booking.key;
     const commentDiv = document.createElement('div'); commentDiv.className = `history-comment ${canEditComment ? 'editable' : 'disabled'}`;
     commentDiv.dataset.key = booking.key;
-    commentDiv.dataset.doctor = booking.doctor;   // <-- ДОБАВЛЯЕМ data-doctor
+    commentDiv.dataset.doctor = booking.doctor;
     commentDiv.dataset.canEdit = canEditComment; commentDiv.dataset.login = booking.login; commentDiv.dataset.isPast = booking.isPast;
     commentDiv.innerHTML = commentText ? escapeHtml(commentText) : '<em>Нет комментария</em>';
     cell.appendChild(commentDiv);
@@ -578,7 +588,6 @@ async function closeCurrentAdminEditing(saveChanges) {
   if (_historyOutsideHandler) { document.removeEventListener('click', _historyOutsideHandler); _historyOutsideHandler = null; }
 }
 
-// ===== ИСПРАВЛЕНО: используем doctor из data-doctor =====
 async function historyCommentClickHandler(e) {
   e.stopPropagation();
   const div = e.currentTarget;
@@ -598,7 +607,7 @@ async function historyCommentClickHandler(e) {
   }
 
   const key = div.getAttribute('data-key');
-  const doctor = div.getAttribute('data-doctor');   // <-- получаем doctor
+  const doctor = div.getAttribute('data-doctor');
   if (!key) { showToast('Ошибка: ключ комментария не найден'); return; }
   const canEdit = div.getAttribute('data-can-edit') === 'true';
   if (!canEdit) { showToast('Вы не можете редактировать этот комментарий'); return; }
@@ -621,7 +630,6 @@ async function historyCommentClickHandler(e) {
     const [date, time] = key.split('|');
     if (!date || !time) { showToast('Ошибка: некорректный ключ слота'); cancelEdit(); return; }
     try {
-      // Передаём doctor в updateComment
       const result = await updateComment(date, time, newText, doctor);
       showToast(result.message || 'Комментарий сохранён');
       const commentData = await loadComment(key, doctor);
@@ -714,6 +722,7 @@ async function adminCommentClickHandler(e) {
   textarea.focus();
 }
 
+// ===================== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ЧЕКБОКСА =====================
 async function successCheckboxChangeHandler(e) {
   const cb = e.currentTarget;
   const key = cb.getAttribute('data-key');
@@ -721,8 +730,12 @@ async function successCheckboxChangeHandler(e) {
   if (!key) return;
   const [date, time] = key.split('|');
   const successMeeting = cb.checked;
-  try { 
-    await updateAdminMeetingData(date, time, null, successMeeting, doctor); 
+  try {
+    // Сначала получаем текущий комментарий администратора, чтобы не потерять его
+    const meetingData = await fetchAdminMeetingData(date, time, doctor);
+    const adminComment = meetingData.adminComment || '';
+    // Обновляем статус, передавая существующий комментарий
+    await updateAdminMeetingData(date, time, adminComment, successMeeting, doctor);
   } catch(err) { 
     showToast('Ошибка обновления статуса'); 
     cb.checked = !cb.checked; 

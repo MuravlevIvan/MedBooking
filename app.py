@@ -113,7 +113,8 @@ def _ensure_tables():
             start_hour INTEGER DEFAULT 9,
             end_hour INTEGER DEFAULT 21,
             break_start TEXT DEFAULT '',
-            break_end TEXT DEFAULT ''
+            break_end TEXT DEFAULT '',
+            booking_type TEXT DEFAULT 'time_slots'
         )
     ''')
     # Добавляем новые колонки, если их нет
@@ -129,12 +130,14 @@ def _ensure_tables():
         db.execute("ALTER TABLE doctors ADD COLUMN break_start TEXT DEFAULT ''")
     if 'break_end' not in columns:
         db.execute("ALTER TABLE doctors ADD COLUMN break_end TEXT DEFAULT ''")
+    if 'booking_type' not in columns:
+        db.execute("ALTER TABLE doctors ADD COLUMN booking_type TEXT DEFAULT 'time_slots'")
     
-    doctors = [('doctor1', 'Врач 1', 1, 60, 9, 21, '', '')]
+    doctors = [('doctor1', 'Врач 1', 1, 60, 9, 21, '', '', 'time_slots')]
     for doc in doctors:
         db.execute('''INSERT OR IGNORE INTO doctors 
-                      (id, name, display_order, slot_interval, start_hour, end_hour, break_start, break_end) 
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', doc)
+                      (id, name, display_order, slot_interval, start_hour, end_hour, break_start, break_end, booking_type) 
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', doc)
     
     # Таблица глобальных настроек
     db.execute('''
@@ -679,7 +682,7 @@ def update_comment(date, time):
 @app.route('/api/doctors', methods=['GET'])
 def get_doctors():
     db = get_db()
-    rows = db.execute('SELECT id, name, slot_interval, start_hour, end_hour, break_start, break_end FROM doctors ORDER BY display_order').fetchall()
+    rows = db.execute('SELECT id, name, slot_interval, start_hour, end_hour, break_start, break_end, booking_type FROM doctors ORDER BY display_order').fetchall()
     return jsonify([{
         'id': row['id'], 
         'name': row['name'],
@@ -687,7 +690,8 @@ def get_doctors():
         'startHour': row['start_hour'],
         'endHour': row['end_hour'],
         'breakStart': row['break_start'] or '',
-        'breakEnd': row['break_end'] or ''
+        'breakEnd': row['break_end'] or '',
+        'bookingType': row['booking_type']
     } for row in rows])
 
 @app.route('/api/doctors', methods=['POST'])
@@ -702,6 +706,9 @@ def create_doctor():
     end_hour = data.get('endHour', 21)
     break_start = data.get('breakStart', '')
     break_end = data.get('breakEnd', '')
+    booking_type = data.get('bookingType', 'time_slots')
+    if booking_type not in ['time_slots', 'daily']:
+        booking_type = 'time_slots'
     
     if not name:
         return jsonify({'error': 'Название врача не может быть пустым'}), 400
@@ -724,9 +731,9 @@ def create_doctor():
     max_order = db.execute('SELECT COALESCE(MAX(display_order), 0) FROM doctors').fetchone()[0]
     new_order = max_order + 1
     new_id = f"doctor_{uuid.uuid4().hex[:12]}"
-    db.execute('''INSERT INTO doctors (id, name, display_order, slot_interval, start_hour, end_hour, break_start, break_end) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-               (new_id, name, new_order, slot_interval, start_hour, end_hour, break_start, break_end))
+    db.execute('''INSERT INTO doctors (id, name, display_order, slot_interval, start_hour, end_hour, break_start, break_end, booking_type) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+               (new_id, name, new_order, slot_interval, start_hour, end_hour, break_start, break_end, booking_type))
     db.commit()
     socketio.emit('doctors_updated', {})
     return jsonify({
@@ -737,6 +744,7 @@ def create_doctor():
         'endHour': end_hour,
         'breakStart': break_start,
         'breakEnd': break_end,
+        'bookingType': booking_type,
         'display_order': new_order
     })
 
@@ -780,6 +788,10 @@ def update_doctor(doctor_id):
             except:
                 be = ''
         updates['break_end'] = be
+    if 'bookingType' in data:
+        bt = data['bookingType']
+        if bt in ['time_slots', 'daily']:
+            updates['booking_type'] = bt
     
     if not updates:
         return jsonify({'error': 'Нет данных для обновления'}), 400

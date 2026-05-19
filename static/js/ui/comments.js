@@ -99,19 +99,20 @@ async function enterEditMode(key, commentText) {
             const isPastSlot = slotTime < new Date();
             const canEditAfter = isAdminUser || (owner === currentUser && !isPastSlot);
 
-            const parent = commentDiv.parentNode;
-            parent.innerHTML = `
-                <div class="booking-comment ${!displayText ? 'empty' : ''}" data-key="${key}" data-owner="${owner}" data-can-edit="${canEditAfter}">
-                    ${displayText ? escapeHtml(displayText) : '✏️ Кликните, чтобы добавить комментарий'}
-                </div>
-                <span class="edit-info">${editInfo}</span>
-            `;
-            const newCommentDiv = parent.querySelector('.booking-comment');
-            if (newCommentDiv && newCommentDiv.getAttribute('data-can-edit') === 'true') {
-                newCommentDiv.addEventListener('click', commentClickHandler);
+            // ✅ Исправлено: обновляем только содержимое commentDiv и span.edit-info
+            commentDiv.innerHTML = displayText ? escapeHtml(displayText) : '✏️ Кликните, чтобы добавить комментарий';
+            commentDiv.className = `booking-comment ${!displayText ? 'empty' : ''}`;
+            commentDiv.setAttribute('data-key', key);
+            commentDiv.setAttribute('data-owner', owner);
+            commentDiv.setAttribute('data-can-edit', canEditAfter);
+            commentDiv.removeEventListener('click', commentClickHandler);
+            if (canEditAfter) {
+                commentDiv.addEventListener('click', commentClickHandler);
             }
-            const newEditInfoSpan = parent.querySelector('.edit-info');
-            if (newEditInfoSpan && editInfo) newEditInfoSpan.textContent = editInfo;
+            const editInfoSpan = bookingItem.querySelector('.edit-info');
+            if (editInfoSpan) {
+                editInfoSpan.textContent = editInfo;
+            }
 
             if (window._mainOutsideHandler) {
                 document.removeEventListener('click', window._mainOutsideHandler);

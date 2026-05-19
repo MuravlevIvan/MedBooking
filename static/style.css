@@ -750,7 +750,9 @@ body {
         padding: 0 0.2rem;
     }
 }
-
+.slot-btn.daily-slot {
+    padding: 1.5rem 0;        /* ещё больше высоты */
+}
 /* Селектор интервала слотов */
 .interval-selector {
     display: inline-flex;
@@ -820,6 +822,21 @@ body {
     background: white;
     cursor: pointer;
 }
+/* Для daily-режима – сетка 4 колонки, перенос строк */
+.week-grid[style*="grid"] {
+
+    overflow-x: visible;
+    grid-template-columns: repeat(4, 0fr);
+}
+.week-grid {
+ grid-template-columns: repeat(4, 0fr)
+}
+
+@media (max-width: 700px) {
+    .week-grid[style*="grid"] {
+        grid-template-columns: repeat(2, 0fr) !important; /* на телефонах 2 колонки */
+    }
+}
 
 /* Адаптивность для мобильных устройств */
 @media (max-width: 700px) {
@@ -876,7 +893,7 @@ body {
 .doctor-tab {
     background: #e2e8f0;
     border: none;
-    padding: 0.5rem 1.5rem;
+    padding: 0.7rem 2.5rem;
     border-radius: 2rem;
     font-weight: 600;
     color: #1e293b;
