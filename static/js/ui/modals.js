@@ -226,7 +226,7 @@ function showEditDoctorModal(doctorId) {
       <div class="edit-user-container" style="max-width: 500px;">
         <div class="edit-user-header"><button class="edit-close-icon" id="closeDoctorModalIcon">✕</button><h3>✏️ Редактирование врача</h3></div>
         <div class="edit-user-body">
-          <div class="edit-field"><label>🏥 Имя врача</label><input type="text" id="doctorName" value="${escapeHtml(doctor.name)}"></div>
+          <div class="edit-field"><label>🏥 Название дорожки</label><input type="text" id="doctorName" value="${escapeHtml(doctor.name)}"></div>
           <div class="edit-field"><label>⏱ Интервал слотов (мин)</label>
             <select id="doctorSlotInterval">
               <option value="10" ${doctor.slotInterval === 10 ? 'selected' : ''}>10 минут</option>
@@ -299,7 +299,7 @@ function showEditDoctorModal(doctorId) {
   });
 }
 
-// ========== ИСТОРИЯ БРОНИРОВАНИЙ ==========
+// ========== ИСТОРИЯ БРОНИРОВАНИЙ (с корректным интервалом для каждого врача) ==========
 
 let _currentEditingData = null;
 let _currentAdminEditingData = null;
@@ -404,8 +404,12 @@ function renderHistoryContent(data) {
   const body = document.getElementById('historyBody');
   if (!body) return;
   const { bookings, page, pages } = data;
-  const doctor = doctorsList.find(d => d.id === currentDoctor);
-  const slotInterval = doctor?.slotInterval || 60;
+
+  // Построим карту интервалов для каждого врача (по id)
+  const doctorIntervalMap = {};
+  doctorsList.forEach(doc => {
+    doctorIntervalMap[doc.id] = doc.slotInterval || 60;
+  });
 
   let doctorOptions = '<option value="">📋 Все дорожки</option>';
   if (isAdminUser) {
@@ -466,6 +470,10 @@ function renderHistoryContent(data) {
     const dateObj = new Date(booking.date);
     const dateStr = dateObj.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
     const [hour, minute] = booking.time.split(':').map(Number);
+    
+    // Берём интервал для конкретного врача
+    const slotInterval = doctorIntervalMap[booking.doctor] || 60;
+    
     const endTime = new Date(dateObj);
     endTime.setHours(hour, minute, 0, 0);
     endTime.setMinutes(endTime.getMinutes() + slotInterval);
@@ -477,7 +485,7 @@ function renderHistoryContent(data) {
     const doctorName = doctorsList.find(d => d.id === booking.doctor)?.name || booking.doctor;
 
     const row = tbody.insertRow();
-    let cell = row.insertCell(); cell.setAttribute('data-label', 'Дата'); cell.textContent = `${dateStr}, ${timeStr}`;
+    let cell = row.insertCell(); cell.setAttribute('data-label', 'Дата'); cell.innerHTML = `<em>${escapeHtml(dateStr)}, </br> ${escapeHtml(timeStr)}</em>`;
     if (isAdminUser) { cell = row.insertCell(); cell.setAttribute('data-label', 'Пользователь'); cell.textContent = booking.displayName || booking.login; }
     cell = row.insertCell(); cell.setAttribute('data-label', 'Врач'); cell.textContent = doctorName;
     if (isAdminUser) {
@@ -704,7 +712,7 @@ async function successCheckboxChangeHandler(e) {
   try { await updateAdminMeetingData(date, time, null, successMeeting); } catch(err) { showToast('Ошибка обновления статуса'); cb.checked = !cb.checked; }
 }
 
-// Глобальная привязка функций, которые могут вызываться извне
+// Глобальная привязка функций
 window.showAuthModal = showAuthModal;
 window.showHistoryModal = showHistoryModal;
 window.showRegisterModal = showRegisterModal;

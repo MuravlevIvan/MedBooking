@@ -878,26 +878,40 @@ body {
 }
 .history-table th:first-child,
 .history-table td:first-child {
-    width: 1%;
+    width: 5%;
     white-space: nowrap;
 }
 
 .history-table th:nth-child(1),
 .history-table td:nth-child(1) {
-    width: 10%;
+    width: 5%;
 }
 
+.history-table th:nth-child(2),
+.history-table td:nth-child(2) {
+    width: 5%;
+}
 .history-table th:nth-child(3),
 .history-table td:nth-child(3) {
-    width: 5%;
+    width: 15%;
 }
 .history-table th:nth-child(4),
 .history-table td:nth-child(4) {
-    width: 30%;
+    width: 10%;
 }
 .history-table th:nth-child(5),
 .history-table td:nth-child(5) {
     width: 30%;
+}
+.history-table th:nth-child(6),
+.history-table td:nth-child(6) {
+    width: 30%;
+}
+.history-comment.editable {
+    min-width: 130px;
+}
+.history-comment.admin-comment.editable {
+    min-width: 130px;
 }
 /* ── Подсветка ── */
 .booking-item.highlighted {
@@ -1061,7 +1075,6 @@ body {
     border-radius: 0.6rem;
     padding: 0.3rem 0.6rem;
     cursor: pointer;
-    word-break: break-word;
 }
 .history-comment.editable:hover {
     background: #eef2ff;
@@ -1077,7 +1090,6 @@ body {
     gap: 0.3rem;
 }
 .comment-textarea-history {
-    width: 100%;
     padding: 0.4rem;
     border: 2px solid #3b82f6;
     border-radius: 0.6rem;
@@ -1119,16 +1131,18 @@ body {
     background: #3b82f6;
     color: white;
 }
-@media (max-width: 700px) {
+
+@media (max-width: 800px) {
     .history-table, .history-table thead, .history-table tbody, .history-table tr, .history-table td {
         display: block;
+        padding-left: 2.5em;
     }
     .history-table thead { display: none; }
     .history-table td {
         border: none;
         border-bottom: 1px solid #e2e8f0;
         position: relative;
-        padding-left: 35%;
+        padding-left: 50%;
     }
     .history-table td:before {
         content: attr(data-label);
@@ -1136,5 +1150,24 @@ body {
         left: 0.5rem;
         width: 30%;
         font-weight: 600;
+
+    }
+    .comment-textarea-history {
+    width: 10.5em;
+
+}
+
+}
+@media (max-width: 500px) {
+    .history-table, .history-table thead, .history-table tbody, .history-table tr, .history-table td {
+        display: block;
+        padding-left: 0em;
+    }
+    .history-table thead { display: none; }
+    .history-table td {
+        border: none;
+        border-bottom: 1px solid #e2e8f0;
+        position: relative;
+        padding-left: 50%;
     }
 }
