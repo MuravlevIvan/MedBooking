@@ -222,6 +222,44 @@ def register():
     db.commit()
     return jsonify({'message': 'Заявка отправлена администратору'})
 
+@app.route('/api/quick_register', methods=['POST'])
+@csrf.exempt
+def quick_register():
+    data = request.get_json()
+    login = data.get('login', '').strip().lower()
+    password = data.get('password', '')
+    
+    # Валидация
+    if not login or not password:
+        return jsonify({'error': 'Логин и пароль обязательны'}), 400
+    if len(password) < 8:
+        return jsonify({'error': 'Пароль должен быть минимум 8 символов'}), 400
+    if login == ADMIN_LOGIN:
+        return jsonify({'error': 'Недопустимое имя пользователя'}), 400
+    if not (login.isalnum() or '_' in login):
+        return jsonify({'error': 'Логин может содержать только латиницу, цифры и _'}), 400
+    
+    db = get_db()
+    # Проверка существования пользователя (активного или в pending)
+    if db.execute('SELECT 1 FROM users WHERE login = ?', (login,)).fetchone():
+        return jsonify({'error': 'Пользователь уже существует'}), 409
+    if db.execute('SELECT 1 FROM pending_users WHERE login = ?', (login,)).fetchone():
+        return jsonify({'error': 'Заявка на регистрацию уже подана'}), 409
+    
+    # Хешируем пароль и создаём пользователя сразу активным
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    db.execute(
+        'INSERT INTO users (login, password_hash, first_name, last_name, middle_name, phone, email) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (login, hashed, '', '', '', '', '')
+    )
+    db.commit()
+    
+    # Сразу авторизуем пользователя
+    session['user'] = login
+    
+    socketio.emit('user_updated', {})
+    return jsonify({'login': login, 'is_admin': False, 'message': 'Регистрация выполнена'})
+
 @app.route('/api/login', methods=['POST'])
 @csrf.exempt
 def login():

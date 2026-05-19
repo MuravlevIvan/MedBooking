@@ -28,6 +28,18 @@ async function apiFetch(url, options = {}) {
   }
 }
 
+// Быстрая регистрация (только логин + пароль)
+async function quickRegister(login, password) {
+  const response = await fetch('/api/quick_register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login, password })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Ошибка регистрации');
+  return data;
+}
+
 // Загрузка списка врачей
 async function loadDoctors() {
   try {
@@ -40,15 +52,13 @@ async function loadDoctors() {
   return doctorsList;
 }
 
-// Загрузка бронирований для конкретного врача
+// Загрузка бронирований для конкретного врача (только обновление данных, без рендеринга)
 async function loadBookingsForDoctor(doctor) {
   const bookingsData = await apiFetch(`/api/bookings/all?doctor=${doctor}`);
   allBookings = {};
   bookingsData.forEach(b => { allBookings[b.key] = b.login; });
   bookingElementsCache.clear();
-  renderMainContent();
-  renderBookingsList();
-  updateInfoPanel();
+  // Рендеринг вызывается извне (в renderFullApp или после входа)
 }
 
 // Функции управления врачами
@@ -128,6 +138,9 @@ async function loginUser(login, password) {
       if (isAdminUser && !adminBookingTarget) adminBookingTarget = currentUser;
       selectedSlots.clear(); highlightedBookingKey = null;
       await loadInitialData();
+      // Принудительно обновляем список бронирований и подсветку
+      await renderBookingsList();
+      updateHighlightedBooking();
       let modal = document.getElementById('authModal');
       if (modal) modal.remove();
       return { success: true };
@@ -255,7 +268,6 @@ async function cancelBooking(dateStr, timeStr) {
   } catch (e) {}
 }
 
-// ===== ИСПРАВЛЕНО: добавлен параметр doctor =====
 async function loadComment(key, doctor = currentDoctor) {
   const [date, time] = key.split('|');
   try { return await apiFetch(`/api/comments/${date}/${time}?doctor=${doctor}`); }

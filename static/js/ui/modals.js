@@ -1,6 +1,6 @@
 // ===================== Модальные окна =====================
 
-// ---------- Авторизация ----------
+// ---------- Авторизация (с кнопкой быстрой регистрации) ----------
 function showAuthModal() {
   const html = `
     <div class="modal-overlay" id="authModal">
@@ -10,19 +10,51 @@ function showAuthModal() {
           <button class="auth-modal-close" id="closeAuthModal">✕</button>
         </div>
         <div class="auth-modal-body">
-          <div class="subtitle">Войдите в систему для бронирования</div>
+          <div class="subtitle">Войдите в систему для бронирования </br> Для быстрой регистрации заполните логин, пароль и нажмите кнопку 'Быстрая регистрация'</i></div>
           <div class="auth-field"><label>👤 Логин</label><input type="text" id="authLogin" placeholder="Введите логин" autocomplete="off"></div>
           <div class="auth-field"><label>🔑 Пароль</label><input type="password" id="authPassword" placeholder="Введите пароль"></div>
           <div id="authError" class="auth-error"></div>
           <button class="auth-login-btn" id="authLoginBtn">Войти</button>
-          <div class="auth-link"><button id="showRegisterBtn">📝 Нет аккаунта? Зарегистрироваться</button></div>
+          <button class="auth-login-btn" id="quickRegisterBtn" style="margin-top: 0.5rem; background: #10b981;">⚡ Быстрая регистрация</button>
+          <div class="auth-link"><button id="showRegisterBtn">📝 Нет аккаунта? Зарегистрироваться (с анкетой)</button></div>
         </div>
       </div>
     </div>`;
   document.body.insertAdjacentHTML('beforeend', html);
   const overlay = document.getElementById('authModal');
   const loginInput = document.getElementById('authLogin'), passInput = document.getElementById('authPassword'), errorDiv = document.getElementById('authError');
+  
   const doLogin = async () => { errorDiv.textContent = ''; const res = await loginUser(loginInput.value.trim().toLowerCase(), passInput.value); if (!res.success) errorDiv.textContent = res.error || 'Неверный логин или пароль'; };
+  
+  // Обработчик быстрой регистрации
+  document.getElementById('quickRegisterBtn').addEventListener('click', async () => {
+    const login = loginInput.value.trim().toLowerCase();
+    const password = passInput.value;
+    errorDiv.textContent = '';
+    if (!login || !password) {
+      errorDiv.textContent = 'Заполните логин и пароль';
+      return;
+    }
+    if (password.length < 8) {
+      errorDiv.textContent = 'Пароль должен быть минимум 8 символов';
+      return;
+    }
+    try {
+      const data = await quickRegister(login, password);
+      currentUser = data.login;
+      isAdminUser = data.is_admin;
+      if (isAdminUser && !adminBookingTarget) adminBookingTarget = currentUser;
+      selectedSlots.clear();
+      highlightedBookingKey = null;
+      await loadInitialData();
+      await renderBookingsList();      // гарантированное обновление списка
+      updateHighlightedBooking();
+      overlay.remove();
+    } catch (err) {
+      errorDiv.textContent = err.message;
+    }
+  });
+  
   document.getElementById('authLoginBtn').addEventListener('click', doLogin);
   document.getElementById('showRegisterBtn').addEventListener('click', () => { overlay.remove(); showRegisterModal(); });
   document.getElementById('closeAuthModal').addEventListener('click', () => overlay.remove());
@@ -31,7 +63,7 @@ function showAuthModal() {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
-// ---------- Регистрация ----------
+// ---------- Регистрация (полная анкета) ----------
 function showRegisterModal() {
   const html = `
     <div class="modal-overlay" id="registerModal">
@@ -213,7 +245,7 @@ function showEditUserModal(login) {
   });
 }
 
-// ---------- Редактирование врача (админ) – с выбором типа бронирования ----------
+// ---------- Редактирование врача (админ) ----------
 function showEditDoctorModal(doctorId) {
   const doctor = doctorsList.find(d => d.id === doctorId);
   if (!doctor) return;
@@ -320,7 +352,6 @@ let _currentEditingData = null;
 let _currentAdminEditingData = null;
 let _historyOutsideHandler = null;
 
-// ИСПРАВЛЕНО: добавлен параметр doctor
 async function fetchAdminMeetingData(date, time, doctor = currentDoctor) {
     if (!isAdminUser) return null;
     try {
@@ -722,7 +753,6 @@ async function adminCommentClickHandler(e) {
   textarea.focus();
 }
 
-// ===================== ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ЧЕКБОКСА =====================
 async function successCheckboxChangeHandler(e) {
   const cb = e.currentTarget;
   const key = cb.getAttribute('data-key');
@@ -731,10 +761,8 @@ async function successCheckboxChangeHandler(e) {
   const [date, time] = key.split('|');
   const successMeeting = cb.checked;
   try {
-    // Сначала получаем текущий комментарий администратора, чтобы не потерять его
     const meetingData = await fetchAdminMeetingData(date, time, doctor);
     const adminComment = meetingData.adminComment || '';
-    // Обновляем статус, передавая существующий комментарий
     await updateAdminMeetingData(date, time, adminComment, successMeeting, doctor);
   } catch(err) { 
     showToast('Ошибка обновления статуса'); 
