@@ -750,6 +750,82 @@ body {
         padding: 0 0.2rem;
     }
 }
+
+/* Селектор интервала слотов */
+.interval-selector {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #f1f5f9;
+    padding: 0.3rem 1rem;
+    border-radius: 2rem;
+}
+.interval-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #334155;
+}
+.interval-select {
+    padding: 0.2rem 0.5rem;
+    border-radius: 1rem;
+    border: 1px solid #cbd5e1;
+    background: white;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+}
+@media (max-width: 700px) {
+    .interval-selector {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Информация о настройках врача (интервал, часы работы) */
+.doctor-settings-info {
+    background: #e2e8f0;
+    border-radius: 2rem;
+    padding: 0.3rem 1rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: #1e293b;
+    text-align: center;
+    margin: 0.5rem auto 1rem auto;
+    width: fit-content;
+    max-width: 90%;
+}
+
+/* Стили для select в модальном окне редактирования врача */
+#editDoctorModal .edit-field select {
+    width: 100%;
+    padding: 0.4rem 0.7rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 0.7rem;
+    font-size: 0.8rem;
+    background: white;
+    cursor: pointer;
+}
+
+/* Адаптивность для мобильных устройств */
+@media (max-width: 700px) {
+    .doctor-settings-info {
+        font-size: 0.6rem;
+        padding: 0.2rem 0.8rem;
+    }
+}
+/* Стили для полей ввода времени (тип time) */
+.edit-field input[type="time"] {
+    width: 100%;
+    padding: 0.4rem 0.7rem;
+    border: 2px solid #e2e8f0;
+    border-radius: 0.7rem;
+    font-size: 0.8rem;
+    font-family: monospace;
+}
+.edit-field small {
+    font-size: 0.65rem;
+    margin-top: 0.2rem;
+}
 .doctor-tabs {
     display: flex;
     gap: 0.5rem;

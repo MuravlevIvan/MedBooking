@@ -1,9 +1,5 @@
 // ===================== Календарь (сетка дней и слотов) =====================
 
-/**
- * Генерирует сетку дней с слотами внутри #weekContainer.
- * Количество дней зависит от ширины экрана.
- */
 function renderMainContent() {
   const weekContainer = document.getElementById('weekContainer');
   if (!weekContainer) return;
@@ -11,7 +7,6 @@ function renderMainContent() {
   let base = normalizeDate(currentFocusDate);
   if (base < today) base = new Date(today);
 
-  // Определяем количество дней в зависимости от ширины экрана
   let daysCount = 4;
   if (window.innerWidth <= 1280 && window.innerWidth > 1024) daysCount = 4;
   else if (window.innerWidth <= 1024 && window.innerWidth > 710) daysCount = 4;
@@ -25,6 +20,24 @@ function renderMainContent() {
     days.push(normalizeDate(day));
   }
   weekContainer.innerHTML = '';
+  
+  const doctor = doctorsList.find(d => d.id === currentDoctor);
+  const slotInterval = doctor?.slotInterval || 60;
+  const startHour = doctor?.startHour ?? 9;
+  const endHour = doctor?.endHour ?? 21;
+  const breakStart = doctor?.breakStart || '';
+  const breakEnd = doctor?.breakEnd || '';
+  
+  // Функция проверки, попадает ли время в перерыв
+  function isInBreak(timeMinutes) {
+    if (!breakStart || !breakEnd) return false;
+    const [breakStartHour, breakStartMin] = breakStart.split(':').map(Number);
+    const [breakEndHour, breakEndMin] = breakEnd.split(':').map(Number);
+    const breakStartTotal = breakStartHour * 60 + breakStartMin;
+    const breakEndTotal = breakEndHour * 60 + breakEndMin;
+    return timeMinutes >= breakStartTotal && timeMinutes < breakEndTotal;
+  }
+  
   days.forEach(day => {
     const ymd = formatYMD(day);
     const weekDay = day.toLocaleDateString('ru-RU', { weekday: 'short' });
@@ -35,17 +48,37 @@ function renderMainContent() {
     column.innerHTML = `<div class="day-header">${weekDay}, ${dateNum}${isToday ? ' 🔹' : ''}</div>`;
     const slotsDiv = document.createElement('div');
     slotsDiv.className = 'slots-container';
-    for (let hour = 9; hour < 21; hour++) {
-      const key = `${ymd}|${hour}`;
+    
+    let currentTime = startHour * 60;
+    const endTime = endHour * 60;
+    while (currentTime < endTime) {
+      // Пропускаем слоты, попадающие в перерыв
+      if (isInBreak(currentTime)) {
+        currentTime += slotInterval;
+        continue;
+      }
+      
+      const hourStart = Math.floor(currentTime / 60);
+      const minuteStart = currentTime % 60;
+      const timeStr = `${String(hourStart).padStart(2,'0')}:${String(minuteStart).padStart(2,'0')}`;
+      const nextTime = currentTime + slotInterval;
+      const hourEnd = Math.floor(nextTime / 60);
+      const minuteEnd = nextTime % 60;
+      const timeEndStr = `${String(hourEnd).padStart(2,'0')}:${String(minuteEnd).padStart(2,'0')}`;
+      
+      const key = `${ymd}|${timeStr}`;
       const owner = allBookings[key] || null;
-      const slotTime = new Date(day); slotTime.setHours(hour, 0, 0, 0);
-      const isPast = slotTime < new Date();
+      const slotDateTime = new Date(day);
+      slotDateTime.setHours(hourStart, minuteStart, 0, 0);
+      const isPast = slotDateTime < new Date();
       const isFree = !owner && !isPast;
       const isBookedByMe = owner && currentUser && owner === currentUser;
       const isSelected = selectedSlots.has(key);
+      
       const slotBtn = document.createElement('div');
       slotBtn.className = 'slot-btn';
-      slotBtn.textContent = `${String(hour).padStart(2,'0')}:00 – ${String(hour+1).padStart(2,'0')}:00`;
+      slotBtn.textContent = `${timeStr} – ${timeEndStr}`;
+      
       if (isPast) { slotBtn.classList.add('booked'); slotBtn.style.cursor = 'default'; }
       else if (isSelected) slotBtn.classList.add('selected');
       else if (isBookedByMe) slotBtn.classList.add('booked-by-me');
@@ -53,12 +86,12 @@ function renderMainContent() {
       else if (!currentUser) slotBtn.classList.add('free-guest');
       else if (isAdminUser || allUsers.includes(currentUser)) slotBtn.classList.add('free');
       else slotBtn.classList.add('free-guest');
+      
       if (highlightedBookingKey === key && !isPast) slotBtn.classList.add('highlighted-slot');
 
-      // Обработчики кликов по слотам
       if (!isPast && isFree && (isAdminUser || (currentUser && allUsers.includes(currentUser)))) {
         slotBtn.style.cursor = 'pointer';
-        slotBtn.addEventListener('click', (() => toggleSlotSelection(ymd, hour, day)));
+        slotBtn.addEventListener('click', (() => toggleSlotSelection(ymd, timeStr, day)));
       } else if (!isPast && isFree && !currentUser) {
         slotBtn.style.cursor = 'pointer';
         slotBtn.addEventListener('click', () => showAuthModal());
@@ -69,7 +102,9 @@ function renderMainContent() {
         slotBtn.style.cursor = 'pointer';
         slotBtn.addEventListener('click', () => highlightBookingSlot(key));
       }
+      
       slotsDiv.appendChild(slotBtn);
+      currentTime += slotInterval;
     }
     column.appendChild(slotsDiv);
     weekContainer.appendChild(column);
@@ -81,18 +116,24 @@ function renderMainContent() {
   document.getElementById('currentDateSpan').textContent = `${startStr} – ${endDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
 }
 
-/**
- * Создаёт DOM‑элемент для одной записи бронирования (в боковой панели).
- * @param {object} slot – { date, hour, login, key }
- * @param {string|null} commentText – текст комментария (если уже загружен)
- * @returns {HTMLElement}
- */
 function createBookingItem(slot, commentText = null) {
+  const doctor = doctorsList.find(d => d.id === currentDoctor);
+  const slotInterval = doctor?.slotInterval || 60;
+  
   const dateObj = new Date(slot.date);
   const dayName = dateObj.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' });
-  const timeStr = `${String(slot.hour).padStart(2,'0')}:00 - ${String(slot.hour+1).padStart(2,'0')}:00`;
+  const [hour, minute] = slot.time.split(':').map(Number);
+  const nextTime = new Date(dateObj);
+  nextTime.setHours(hour, minute, 0, 0);
+  nextTime.setMinutes(nextTime.getMinutes() + slotInterval);
+  const timeEndStr = `${String(nextTime.getHours()).padStart(2,'0')}:${String(nextTime.getMinutes()).padStart(2,'0')}`;
+  const timeStr = `${slot.time} – ${timeEndStr}`;
   const key = slot.key, owner = slot.login;
-  const canEdit = isAdminUser || owner === currentUser;
+  
+  const slotTime = new Date(slot.date);
+  slotTime.setHours(hour, minute, 0, 0);
+  const isPastSlot = slotTime < new Date();
+  const canEdit = isAdminUser || (owner === currentUser && !isPastSlot);
 
   const item = document.createElement('div');
   item.className = `booking-item ${isAdminUser ? 'admin-view' : ''}`;
@@ -105,22 +146,24 @@ function createBookingItem(slot, commentText = null) {
   item.innerHTML = `
     <div class="booking-header">
       <div><span class="booking-time">${dayName}, ${timeStr}</span></div>
-      ${isAdminUser ? `<div class="booking-user">👤 ${getDisplayName(owner)} (${owner})</div>` : ''}
+      ${isAdminUser ? `<div class="booking-user" data-login="${owner}" style="cursor:pointer;" title="Нажмите для просмотра истории пользователя">👤 ${getDisplayName(owner)} (${owner})</div>` : ''}
     </div>
     <div class="booking-comment ${!hasComment ? 'empty' : ''}" data-key="${key}" data-owner="${owner}" data-can-edit="${canEdit}">
       ${displayText}
     </div>
     <div class="booking-footer">
-      <button class="cancel-booking-btn" data-date="${slot.date}" data-hour="${slot.hour}">❌ Отменить бронь</button>
+      <button class="cancel-booking-btn" data-date="${slot.date}" data-time="${slot.time}">❌ Отменить бронь</button>
       <span class="edit-info"></span>
     </div>`;
 
-  // Обработчик кнопки отмены
-  item.querySelector('.cancel-booking-btn')?.addEventListener('click', () => {
-    if (confirm('Отменить бронь?')) cancelBooking(slot.date, slot.hour);
-  });
+  const cancelBtn = item.querySelector('.cancel-booking-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm('Отменить бронь?')) cancelBooking(slot.date, slot.time);
+    });
+  }
 
-  // Обработчик клика по комментарию
   const commentDiv = item.querySelector('.booking-comment');
   if (commentDiv) {
     commentDiv.addEventListener('click', (e) => {
@@ -130,18 +173,28 @@ function createBookingItem(slot, commentText = null) {
         highlightedBookingKey = key;
         updateHighlightedBooking();
         renderMainContent();
-        const curText = commentDiv.textContent.trim() === '✏️ Кликните, чтобы добавить комментарий'
-          ? ''
-          : commentDiv.textContent.trim();
+        const curText = commentDiv.textContent.trim() === '✏️ Кликните, чтобы добавить комментарий' ? '' : commentDiv.textContent.trim();
         enterEditMode(key, curText);
-      } else showToast('Вы не можете редактировать этот комментарий');
+      } else {
+        showToast('Вы не можете редактировать этот комментарий');
+      }
     });
   }
 
-  // Обработчик клика по всей записи (выделение слота) для владельца/админа
-  if (canEdit) {
+  if (isAdminUser) {
+    const userDiv = item.querySelector('.booking-user');
+    if (userDiv) {
+      userDiv.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const login = userDiv.getAttribute('data-login');
+        if (login) showHistoryModal(login);
+      });
+    }
+  }
+
+  if (isAdminUser || owner === currentUser) {
     item.addEventListener('click', (e) => {
-      if (e.target.closest('button, .booking-comment, .comment-edit-area, textarea')) return;
+      if (e.target.closest('button, .booking-comment, .comment-edit-area, textarea, .booking-user')) return;
       highlightBookingSlot(key);
     });
   }
@@ -149,10 +202,6 @@ function createBookingItem(slot, commentText = null) {
   return item;
 }
 
-/**
- * Выделяет занятый слот и подсвечивает соответствующую запись в боковой панели.
- * @param {string} key – ключ слота "YYYY-MM-DD|HH"
- */
 function highlightBookingSlot(key) {
   highlightedBookingKey = key;
   selectedSlots.clear();
@@ -161,9 +210,6 @@ function highlightBookingSlot(key) {
   updateInfoPanel();
 }
 
-/**
- * Обновляет подсветку записей в боковой панели (добавляет/убирает класс highlighted).
- */
 function updateHighlightedBooking() {
   const container = document.getElementById('bookingsListContainer');
   if (!container) return;

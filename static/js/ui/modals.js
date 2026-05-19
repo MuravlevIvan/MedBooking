@@ -213,32 +213,116 @@ function showEditUserModal(login) {
   });
 }
 
-// ===================== ИСТОРИЯ БРОНИРОВАНИЙ =====================
+// ---------- Редактирование врача (админ) с полями техперерыва ----------
+function showEditDoctorModal(doctorId) {
+  const doctor = doctorsList.find(d => d.id === doctorId);
+  if (!doctor) return;
+  
+  const breakStart = doctor.breakStart || '';
+  const breakEnd = doctor.breakEnd || '';
+  
+  const html = `
+    <div class="modal-overlay" id="editDoctorModal">
+      <div class="edit-user-container" style="max-width: 500px;">
+        <div class="edit-user-header"><button class="edit-close-icon" id="closeDoctorModalIcon">✕</button><h3>✏️ Редактирование врача</h3></div>
+        <div class="edit-user-body">
+          <div class="edit-field"><label>🏥 Имя врача</label><input type="text" id="doctorName" value="${escapeHtml(doctor.name)}"></div>
+          <div class="edit-field"><label>⏱ Интервал слотов (мин)</label>
+            <select id="doctorSlotInterval">
+              <option value="10" ${doctor.slotInterval === 10 ? 'selected' : ''}>10 минут</option>
+              <option value="15" ${doctor.slotInterval === 15 ? 'selected' : ''}>15 минут</option>
+              <option value="30" ${doctor.slotInterval === 30 ? 'selected' : ''}>30 минут</option>
+              <option value="60" ${doctor.slotInterval === 60 ? 'selected' : ''}>60 минут</option>
+            </select>
+          </div>
+          <div class="edit-field"><label>🕘 Начало рабочего дня (час)</label>
+            <select id="doctorStartHour">
+              ${[...Array(24).keys()].map(h => `<option value="${h}" ${doctor.startHour === h ? 'selected' : ''}>${h}:00</option>`).join('')}
+            </select>
+          </div>
+          <div class="edit-field"><label>🕔 Конец рабочего дня (час)</label>
+            <select id="doctorEndHour">
+              ${[...Array(25).keys()].slice(1).map(h => `<option value="${h}" ${doctor.endHour === h ? 'selected' : ''}>${h}:00</option>`).join('')}
+            </select>
+          </div>
+          <div class="edit-field"><label>🚫 Технический перерыв (начало)</label>
+            <input type="time" id="doctorBreakStart" value="${escapeHtml(breakStart)}" step="60" placeholder="например 13:00">
+          </div>
+          <div class="edit-field"><label>🚫 Технический перерыв (конец)</label>
+            <input type="time" id="doctorBreakEnd" value="${escapeHtml(breakEnd)}" step="60" placeholder="например 14:00">
+          </div>
+          <div class="edit-actions">
+            <button id="saveDoctorBtn" class="save-edit-btn">💾 Сохранить</button>
+            <button id="cancelDoctorBtn" class="cancel-edit-btn">Отмена</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  const modal = document.getElementById('editDoctorModal');
+  document.getElementById('closeDoctorModalIcon')?.addEventListener('click', () => modal.remove());
+  document.getElementById('cancelDoctorBtn')?.addEventListener('click', () => modal.remove());
+  document.getElementById('saveDoctorBtn')?.addEventListener('click', async () => {
+    const newName = document.getElementById('doctorName').value.trim();
+    const newInterval = parseInt(document.getElementById('doctorSlotInterval').value);
+    const newStart = parseInt(document.getElementById('doctorStartHour').value);
+    const newEnd = parseInt(document.getElementById('doctorEndHour').value);
+    const breakStart = document.getElementById('doctorBreakStart').value;
+    const breakEnd = document.getElementById('doctorBreakEnd').value;
+    
+    if (!newName) { showToast('Имя врача не может быть пустым'); return; }
+    if (newEnd <= newStart) { showToast('Конец рабочего дня должен быть больше начала'); return; }
+    if (breakStart && breakEnd && breakStart >= breakEnd) {
+      showToast('Время начала технического перерыва должно быть меньше времени окончания');
+      return;
+    }
+    try {
+      await updateDoctorFull(doctorId, {
+        name: newName,
+        slotInterval: newInterval,
+        startHour: newStart,
+        endHour: newEnd,
+        breakStart: breakStart,
+        breakEnd: breakEnd
+      });
+      await loadDoctors();
+      if (currentDoctor === doctorId) {
+        currentDoctor = doctorId;
+        await loadBookingsForDoctor(currentDoctor);
+      }
+      renderFullApp();
+      modal.remove();
+      showToast('Настройки врача сохранены');
+    } catch(err) {
+      showToast(err.message);
+    }
+  });
+}
+
+// ---------- ИСТОРИЯ БРОНИРОВАНИЙ ----------
 let currentHistoryPage = 1;
 let currentHistorySearch = '';
-let _currentEditingData = null;        // для пользовательских комментариев
-let _currentAdminEditingData = null;   // для административных комментариев
+let _currentEditingData = null;
+let _currentAdminEditingData = null;
 let _historyOutsideHandler = null;
 
-// Получение административных данных встречи (только админ)
-async function fetchAdminMeetingData(date, hour) {
+async function fetchAdminMeetingData(date, time) {
     if (!isAdminUser) return null;
     try {
-        return await apiFetch(`/api/admin/meeting/${date}/${hour}?doctor=${currentDoctor}`);
+        return await apiFetch(`/api/admin/meeting/${date}/${time}?doctor=${currentDoctor}`);
     } catch(e) {
         console.warn(e);
         return { adminComment: '', successMeeting: false };
     }
 }
 
-// Обновление административных данных встречи
-async function updateAdminMeetingData(date, hour, adminComment, successMeeting) {
+async function updateAdminMeetingData(date, time, adminComment, successMeeting) {
     if (!isAdminUser) return;
     const body = {};
     if (adminComment !== null) body.adminComment = adminComment;
     if (successMeeting !== null) body.successMeeting = successMeeting;
     try {
-        await apiFetch(`/api/admin/meeting/${date}/${hour}?doctor=${currentDoctor}`, {
+        await apiFetch(`/api/admin/meeting/${date}/${time}?doctor=${currentDoctor}`, {
             method: 'PUT',
             body: JSON.stringify(body)
         });
@@ -319,6 +403,8 @@ function renderHistoryContent(data) {
   const body = document.getElementById('historyBody');
   if (!body) return;
   const { bookings, page, pages } = data;
+  const doctor = doctorsList.find(d => d.id === currentDoctor);
+  const slotInterval = doctor?.slotInterval || 60;
 
   if (!bookings.length) {
     body.innerHTML = '<div style="text-align:center;padding:2rem;">✨ Нет бронирований</div>';
@@ -336,7 +422,6 @@ function renderHistoryContent(data) {
     `;
   }
 
-  // Добавляем колонку "Врач"
   const tableHeader = `
     <table class="history-table">
       <thead>
@@ -360,11 +445,15 @@ function renderHistoryContent(data) {
   for (const booking of bookings) {
     const dateObj = new Date(booking.date);
     const dateStr = dateObj.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
-    const timeStr = `${String(booking.hour).padStart(2,'0')}:00 - ${String(booking.hour+1).padStart(2,'0')}:00`;
+    const [hour, minute] = booking.time.split(':').map(Number);
+    const endTime = new Date(dateObj);
+    endTime.setHours(hour, minute, 0, 0);
+    endTime.setMinutes(endTime.getMinutes() + slotInterval);
+    const timeEndStr = `${String(endTime.getHours()).padStart(2,'0')}:${String(endTime.getMinutes()).padStart(2,'0')}`;
+    const timeStr = `${booking.time} – ${timeEndStr}`;
     const commentText = booking.comment || '';
     const canEditComment = isAdminUser || (!booking.isPast && booking.login === currentUser);
     const editInfo = booking.lastEditedBy ? `✏️ ${escapeHtml(booking.lastEditedBy)}, ${escapeHtml(booking.lastEditedAt)}` : '';
-    // Получаем название врача
     const doctorName = doctorsList.find(d => d.id === booking.doctor)?.name || booking.doctor;
 
     const row = document.createElement('tr');
@@ -599,15 +688,15 @@ async function historyCommentClickHandler(e) {
       return;
     }
 
-    const [date, hour] = key.split('|');
-    if (!date || hour === undefined) {
+    const [date, time] = key.split('|');
+    if (!date || !time) {
       showToast('Ошибка: некорректный ключ слота');
       cancelEdit();
       return;
     }
 
     try {
-      const result = await updateComment(date, hour, newText);
+      const result = await updateComment(date, time, newText);
       showToast(result.message || 'Комментарий сохранён');
 
       const commentData = await loadComment(key);
@@ -721,7 +810,7 @@ async function adminCommentClickHandler(e) {
 
     const key = div.getAttribute('data-key');
     if (!key) return;
-    const [date, hour] = key.split('|');
+    const [date, time] = key.split('|');
     let currentText = div.innerText.trim();
     if (currentText === 'Нет комментария') currentText = '';
     const originalHtml = div.innerHTML;
@@ -768,7 +857,7 @@ async function adminCommentClickHandler(e) {
             return;
         }
         try {
-            await updateAdminMeetingData(date, hour, newText, null);
+            await updateAdminMeetingData(date, time, newText, null);
             div.innerHTML = newText ? escapeHtml(newText) : '<em>Нет комментария</em>';
             closeEditMode(false);
             showToast('Админ-комментарий сохранён');
@@ -825,10 +914,10 @@ async function successCheckboxChangeHandler(e) {
     const cb = e.currentTarget;
     const key = cb.getAttribute('data-key');
     if (!key) return;
-    const [date, hour] = key.split('|');
+    const [date, time] = key.split('|');
     const successMeeting = cb.checked;
     try {
-        await updateAdminMeetingData(date, hour, null, successMeeting);
+        await updateAdminMeetingData(date, time, null, successMeeting);
     } catch(err) {
         showToast('Ошибка обновления статуса');
         cb.checked = !cb.checked;

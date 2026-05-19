@@ -18,6 +18,6 @@ let bookingFilterTerm = '';
 let userSelectSearchTerm = '';
 let bookingElementsCache = new Map();
 
-// НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ВРАЧЕЙ
-let currentDoctor = 'doctor1';        // id текущего выбранного врача
-let doctorsList = [];                 // массив {id, name}
+// Врачи и их настройки
+let currentDoctor = 'doctor1';
+let doctorsList = []; // каждый объект: {id, name, slotInterval, startHour, endHour, breakStart, breakEnd}

@@ -79,22 +79,23 @@ async function enterEditMode(key, commentText) {
             return;
         }
 
-        const [date, hour] = key.split('|');
-        if (!date || hour === undefined) {
+        const [date, time] = key.split('|');
+        if (!date || !time) {
             showToast('Ошибка: некорректный ключ слота');
             cancelEdit();
             return;
         }
 
         try {
-            const result = await updateComment(date, hour, newText);
+            const result = await updateComment(date, time, newText);
             showToast(result.message || 'Комментарий сохранён');
 
             const commentData = await loadComment(key);
             const displayText = commentData.text || '';
             const editInfo = commentData.lastEditedBy ? `✏️ ${commentData.lastEditedBy}, ${commentData.lastEditedAt}` : '';
             const owner = allBookings[key];
-            const slotTime = new Date(date); slotTime.setHours(parseInt(hour), 0, 0, 0);
+            const [hour, minute] = time.split(':').map(Number);
+            const slotTime = new Date(date); slotTime.setHours(hour, minute, 0, 0);
             const isPastSlot = slotTime < new Date();
             const canEditAfter = isAdminUser || (owner === currentUser && !isPastSlot);
 
@@ -195,9 +196,9 @@ window.exitEditMode = function(key) {
     }
 };
 window.saveComment = async function(key, text) {
-    const [date, hour] = key.split('|');
+    const [date, time] = key.split('|');
     try {
-        const data = await updateComment(date, hour, text);
+        const data = await updateComment(date, time, text);
         showToast(data.message || 'Комментарий сохранён');
         if (typeof renderBookingsList === 'function') {
             await renderBookingsList();

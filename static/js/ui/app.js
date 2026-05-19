@@ -2,7 +2,7 @@
 function renderFullApp() {
   const appContainer = document.getElementById('appContainer');
   
-  // Генерация вкладок врачей с возможностью редактирования для админа
+  // Генерация вкладок врачей
   let doctorsHtml = '';
   if (isAdminUser) {
     doctorsHtml = doctorsList.map(doc => `
@@ -10,7 +10,7 @@ function renderFullApp() {
         <button class="doctor-tab" data-doctor="${doc.id}">
           <span class="doctor-name">${escapeHtml(doc.name)}</span>
         </button>
-        <button class="doctor-edit-btn" data-id="${doc.id}" title="Переименовать">✏️</button>
+        <button class="doctor-edit-btn" data-id="${doc.id}" title="Редактировать">✏️</button>
         <button class="doctor-delete-btn" data-id="${doc.id}" title="Удалить" ${doctorsList.length === 1 ? 'disabled' : ''}>🗑️</button>
       </div>
     `).join('');
@@ -21,6 +21,20 @@ function renderFullApp() {
         ${escapeHtml(doc.name)}
       </button>
     `).join('');
+  }
+
+  // Информация о настройках текущего врача (интервал, часы работы, техперерыв)
+  const currentDoctorSettings = doctorsList.find(d => d.id === currentDoctor);
+  let settingsInfo = '';
+  if (isAdminUser && currentDoctorSettings) {
+    const breakStart = currentDoctorSettings.breakStart || '';
+    const breakEnd = currentDoctorSettings.breakEnd || '';
+    const breakInfo = (breakStart && breakEnd) ? ` | 🚫 техперерыв: ${breakStart}–${breakEnd}` : '';
+    settingsInfo = `
+      <div class="doctor-settings-info" id="doctorSettingsInfo">
+        ⏱ ${currentDoctorSettings.slotInterval} мин | 🕘 ${currentDoctorSettings.startHour}:00 – ${currentDoctorSettings.endHour}:00${breakInfo}
+      </div>
+    `;
   }
 
   appContainer.innerHTML = `
@@ -39,6 +53,7 @@ function renderFullApp() {
       <div class="doctor-tabs">
         ${doctorsHtml}
       </div>
+      ${settingsInfo}
       <div class="dashboard">
         <div class="calendar-section">
           <div class="control-bar">
@@ -88,7 +103,7 @@ function renderFullApp() {
       </div>
     </div>`;
 
-  // Обработчики навигации по дням
+  // Обработчики навигации
   document.getElementById('prevDay')?.addEventListener('click', () => {
     let newDate = new Date(currentFocusDate);
     newDate.setDate(currentFocusDate.getDate() - 1);
@@ -155,7 +170,7 @@ function renderFullApp() {
   }
   document.getElementById('historyBtn')?.addEventListener('click', () => showHistoryModal());
 
-  // Обработчики вкладок врачей (переключение)
+  // Переключение врачей
   document.querySelectorAll('.doctor-tab').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       const doctorId = btn.dataset.doctor;
@@ -174,34 +189,29 @@ function renderFullApp() {
       updateInfoPanel();
       renderMainContent();
       renderBookingsList();
+      // Обновить отображение настроек врача (интервал, часы, техперерыв)
+      const newSettings = doctorsList.find(d => d.id === currentDoctor);
+      const settingsDiv = document.getElementById('doctorSettingsInfo');
+      if (settingsDiv && newSettings) {
+        const breakStart = newSettings.breakStart || '';
+        const breakEnd = newSettings.breakEnd || '';
+        const breakInfo = (breakStart && breakEnd) ? ` | 🚫 техперерыв: ${breakStart}–${breakEnd}` : '';
+        settingsDiv.innerHTML = `⏱ ${newSettings.slotInterval} мин | 🕘 ${newSettings.startHour}:00 – ${newSettings.endHour}:00${breakInfo}`;
+      }
     });
   });
 
-  // Обработчики для админских кнопок управления врачами
+  // Управление врачами (админ)
   if (isAdminUser) {
-    // Переименование
+    // Редактирование врача (открываем модальное окно)
     document.querySelectorAll('.doctor-edit-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
-        const currentName = doctorsList.find(d => d.id === id)?.name || '';
-        const newName = prompt('Введите новое имя врача:', currentName);
-        if (newName && newName.trim()) {
-          try {
-            await updateDoctor(id, newName.trim());
-            await loadDoctors();
-            if (!doctorsList.some(d => d.id === currentDoctor)) {
-              currentDoctor = doctorsList[0]?.id || 'doctor1';
-            }
-            renderFullApp();
-            await loadBookingsForDoctor(currentDoctor);
-          } catch (err) {
-            showToast(err.message);
-          }
-        }
+        showEditDoctorModal(id);
       });
     });
-    // Удаление
+    // Удаление врача
     document.querySelectorAll('.doctor-delete-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -232,9 +242,8 @@ function renderFullApp() {
         const name = prompt('Введите имя нового врача:', 'Новый врач');
         if (name && name.trim()) {
           try {
-            await createDoctor(name.trim());
+            await createDoctor(name.trim(), 60, 9, 21, '', '');
             await loadDoctors();
-            // Переключаемся на нового врача (он последний в списке)
             currentDoctor = doctorsList[doctorsList.length - 1]?.id || currentDoctor;
             renderFullApp();
             await loadBookingsForDoctor(currentDoctor);

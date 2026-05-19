@@ -7,14 +7,11 @@ socket.on('connect', () => {
 
 socket.on('booking_updated', async (data) => {
     if (data && data.doctor && data.doctor !== currentDoctor) return;
-    // Обновляем данные бронирований для текущего врача
     const bookingsData = await apiFetch(`/api/bookings/all?doctor=${currentDoctor}`);
     allBookings = {};
     bookingsData.forEach(b => { allBookings[b.key] = b.login; });
-    // Перерисовываем календарь и список
     renderMainContent();
     if (currentUser) {
-        // Полностью перерисовываем список (очистка происходит внутри renderBookingsList)
         await renderBookingsList();
         updateInfoPanel();
         updateHighlightedBooking();
@@ -68,10 +65,8 @@ socket.on('comment_updated', (data) => {
     }
 });
 
-// Новый обработчик: обновление списка врачей
 socket.on('doctors_updated', async () => {
     await loadDoctors();
-    // Если текущий врач был удалён – переключиться на первого доступного
     if (!doctorsList.some(d => d.id === currentDoctor)) {
         currentDoctor = doctorsList[0]?.id || 'doctor1';
     }
