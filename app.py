@@ -535,18 +535,19 @@ def update_admin_meeting_data(date, time):
     socketio.emit('admin_meeting_updated', {'slot_key': key, 'doctor': doctor})
     return jsonify({'message': 'Данные встречи обновлены'})
 
-# ---------------------- API: История бронирований ----------------------
+# ---------------------- API: История бронирований (с поддержкой фильтра по врачу) ----------------------
 @app.route('/api/bookings/history')
 @login_required
 def get_booking_history():
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 30, type=int)
     search = request.args.get('search', '').strip()
-    doctor = request.args.get('doctor', 'doctor1')
+    doctor = request.args.get('doctor', '').strip()   # '' означает "все врачи"
     if page < 1:
         page = 1
     offset = (page - 1) * limit
     db = get_db()
+
     if is_admin():
         query = '''
             SELECT b.slot_key, b.login, b.doctor,
@@ -556,34 +557,54 @@ def get_booking_history():
             FROM bookings b
             LEFT JOIN comments c ON b.slot_key = c.slot_key AND b.doctor = c.doctor
             LEFT JOIN users u ON b.login = u.login
-            WHERE b.doctor = ?
+            WHERE 1=1
         '''
-        params = [doctor]
+        params = []
+        if doctor:
+            query += ' AND b.doctor = ?'
+            params.append(doctor)
         if search:
             search_like = f'%{search}%'
             query += ' AND (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
             params.extend([search_like, search_like, search_like, search_like])
-        count_sql = 'SELECT COUNT(*) as cnt FROM bookings b LEFT JOIN users u ON b.login = u.login WHERE b.doctor = ?'
-        count_params = [doctor]
+
+        count_sql = 'SELECT COUNT(*) as cnt FROM bookings b LEFT JOIN users u ON b.login = u.login WHERE 1=1'
+        count_params = []
+        if doctor:
+            count_sql += ' AND b.doctor = ?'
+            count_params.append(doctor)
         if search:
             count_sql += ' AND (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
             count_params.extend([search_like, search_like, search_like, search_like])
+
         total = db.execute(count_sql, count_params).fetchone()['cnt']
         query += ' ORDER BY substr(b.slot_key, 1, 10) DESC, substr(b.slot_key, 12) DESC LIMIT ? OFFSET ?'
         params.extend([limit, offset])
         rows = db.execute(query, params).fetchall()
     else:
         user = session['user']
-        rows = db.execute('''
+        query = '''
             SELECT b.slot_key, b.login, b.doctor,
                    c.text as comment_text, c.last_edited_by, c.last_edited_at
             FROM bookings b
             LEFT JOIN comments c ON b.slot_key = c.slot_key AND b.doctor = c.doctor
-            WHERE b.login = ? AND b.doctor = ?
-            ORDER BY substr(b.slot_key, 1, 10) DESC, substr(b.slot_key, 12) DESC
-            LIMIT ? OFFSET ?
-        ''', (user, doctor, limit, offset)).fetchall()
-        total = db.execute('SELECT COUNT(*) as cnt FROM bookings WHERE login = ? AND doctor = ?', (user, doctor)).fetchone()['cnt']
+            WHERE b.login = ?
+        '''
+        params = [user]
+        if doctor:
+            query += ' AND b.doctor = ?'
+            params.append(doctor)
+        query += ' ORDER BY substr(b.slot_key, 1, 10) DESC, substr(b.slot_key, 12) DESC LIMIT ? OFFSET ?'
+        params.extend([limit, offset])
+        rows = db.execute(query, params).fetchall()
+
+        count_sql = 'SELECT COUNT(*) as cnt FROM bookings WHERE login = ?'
+        count_params = [user]
+        if doctor:
+            count_sql += ' AND doctor = ?'
+            count_params.append(doctor)
+        total = db.execute(count_sql, count_params).fetchone()['cnt']
+
     bookings = []
     now = datetime.now()
     for row in rows:

@@ -213,7 +213,7 @@ function showEditUserModal(login) {
   });
 }
 
-// ---------- Редактирование врача (админ) с полями техперерыва ----------
+// ---------- Редактирование врача (админ) ----------
 function showEditDoctorModal(doctorId) {
   const doctor = doctorsList.find(d => d.id === doctorId);
   if (!doctor) return;
@@ -299,9 +299,8 @@ function showEditDoctorModal(doctorId) {
   });
 }
 
-// ---------- ИСТОРИЯ БРОНИРОВАНИЙ ----------
-let currentHistoryPage = 1;
-let currentHistorySearch = '';
+// ========== ИСТОРИЯ БРОНИРОВАНИЙ ==========
+
 let _currentEditingData = null;
 let _currentAdminEditingData = null;
 let _historyOutsideHandler = null;
@@ -333,14 +332,16 @@ async function updateAdminMeetingData(date, time, adminComment, successMeeting) 
     }
 }
 
-async function showHistoryModal() {
+async function showHistoryModal(initialSearch = '', initialDoctor = '') {
   if (!currentUser) {
     showToast('Авторизуйтесь для просмотра истории');
     showAuthModal();
     return;
   }
   currentHistoryPage = 1;
-  currentHistorySearch = '';
+  currentHistorySearch = initialSearch;
+  currentHistoryDoctor = initialDoctor;
+
   const html = `
     <div class="modal-overlay" id="historyModal">
       <div class="history-modal">
@@ -392,7 +393,7 @@ async function loadAndRenderHistory() {
   if (!body) return;
   body.innerHTML = '<div style="text-align:center;">Загрузка...</div>';
   try {
-    const data = await fetchBookingHistory(currentHistoryPage, currentHistorySearch);
+    const data = await fetchBookingHistory(currentHistoryPage, currentHistorySearch, currentHistoryDoctor);
     renderHistoryContent(data);
   } catch (err) {
     body.innerHTML = `<div style="color:red;text-align:center;">Ошибка загрузки: ${err.message}</div>`;
@@ -406,21 +407,38 @@ function renderHistoryContent(data) {
   const doctor = doctorsList.find(d => d.id === currentDoctor);
   const slotInterval = doctor?.slotInterval || 60;
 
-  if (!bookings.length) {
-    body.innerHTML = '<div style="text-align:center;padding:2rem;">✨ Нет бронирований</div>';
-    return;
+  let doctorOptions = '<option value="">📋 Все дорожки</option>';
+  if (isAdminUser) {
+    doctorsList.forEach(doc => {
+      doctorOptions += `<option value="${doc.id}" ${currentHistoryDoctor === doc.id ? 'selected' : ''}>${escapeHtml(doc.name)}</option>`;
+    });
+  } else {
+    const userDoctors = new Set();
+    bookings.forEach(b => { if (b.login === currentUser) userDoctors.add(b.doctor); });
+    doctorsList.forEach(doc => {
+      if (userDoctors.has(doc.id)) {
+        doctorOptions += `<option value="${doc.id}" ${currentHistoryDoctor === doc.id ? 'selected' : ''}>${escapeHtml(doc.name)}</option>`;
+      }
+    });
+    if (doctorOptions === '<option value="">📋 Все дорожки</option>') {
+      doctorsList.forEach(doc => {
+        doctorOptions += `<option value="${doc.id}" ${currentHistoryDoctor === doc.id ? 'selected' : ''}>${escapeHtml(doc.name)}</option>`;
+      });
+    }
   }
 
-  let searchHtml = '';
-  if (isAdminUser) {
-    searchHtml = `
-      <div class="history-search">
+  const searchHtml = `
+    <div class="history-search">
+      <div class="history-filters" style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem;">
+        <select id="historyDoctorSelect" class="history-doctor-select" style="padding: 0.4rem; border-radius: 2rem; border: 2px solid #e2e8f0;">
+          ${doctorOptions}
+        </select>
         <input type="text" id="historySearchInput" placeholder="Поиск по логину или ФИО..." value="${escapeHtml(currentHistorySearch)}">
         <button id="historySearchBtn">🔍 Найти</button>
         <button id="historyResetBtn">✖️ Сброс</button>
       </div>
-    `;
-  }
+    </div>
+  `;
 
   const tableHeader = `
     <table class="history-table">
@@ -442,6 +460,8 @@ function renderHistoryContent(data) {
   `;
 
   const tbody = document.getElementById('historyTableBody');
+  if (!tbody) return;
+
   for (const booking of bookings) {
     const dateObj = new Date(booking.date);
     const dateStr = dateObj.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -456,148 +476,92 @@ function renderHistoryContent(data) {
     const editInfo = booking.lastEditedBy ? `✏️ ${escapeHtml(booking.lastEditedBy)}, ${escapeHtml(booking.lastEditedAt)}` : '';
     const doctorName = doctorsList.find(d => d.id === booking.doctor)?.name || booking.doctor;
 
-    const row = document.createElement('tr');
-    row.innerHTML = `<td data-label="Дата">${dateStr}, ${timeStr}</td>`;
+    const row = tbody.insertRow();
+    let cell = row.insertCell(); cell.setAttribute('data-label', 'Дата'); cell.textContent = `${dateStr}, ${timeStr}`;
+    if (isAdminUser) { cell = row.insertCell(); cell.setAttribute('data-label', 'Пользователь'); cell.textContent = booking.displayName || booking.login; }
+    cell = row.insertCell(); cell.setAttribute('data-label', 'Врач'); cell.textContent = doctorName;
     if (isAdminUser) {
-      row.innerHTML += `<td data-label="Пользователь">${escapeHtml(booking.displayName || booking.login)}</td>`;
+      cell = row.insertCell(); cell.setAttribute('data-label', 'Успешно'); cell.style.textAlign = 'center';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'success-checkbox'; cb.dataset.key = booking.key; cb.checked = !!booking.successMeeting;
+      cell.appendChild(cb);
     }
-    row.innerHTML += `<td data-label="Врач">${escapeHtml(doctorName)}</td>`;
+    cell = row.insertCell(); cell.setAttribute('data-label', 'Комментарий пользователя'); cell.className = 'user-comment-cell'; cell.dataset.key = booking.key;
+    const commentDiv = document.createElement('div'); commentDiv.className = `history-comment ${canEditComment ? 'editable' : 'disabled'}`;
+    commentDiv.dataset.key = booking.key; commentDiv.dataset.canEdit = canEditComment; commentDiv.dataset.login = booking.login; commentDiv.dataset.isPast = booking.isPast;
+    commentDiv.innerHTML = commentText ? escapeHtml(commentText) : '<em>Нет комментария</em>';
+    cell.appendChild(commentDiv);
+    const editInfoSpan = document.createElement('div'); editInfoSpan.className = 'edit-info-history'; editInfoSpan.textContent = editInfo;
+    cell.appendChild(editInfoSpan);
     if (isAdminUser) {
-      const successChecked = booking.successMeeting ? 'checked' : '';
-      row.innerHTML += `
-        <td data-label="Успешно" style="text-align: center;">
-          <input type="checkbox" class="success-checkbox" data-key="${booking.key}" ${successChecked}>
-        </td>
-      `;
+      cell = row.insertCell(); cell.setAttribute('data-label', 'Комментарий администратора');
+      const adminDiv = document.createElement('div'); adminDiv.className = 'history-comment admin-comment editable'; adminDiv.dataset.key = booking.key; adminDiv.dataset.type = 'admin';
+      adminDiv.innerHTML = booking.adminComment ? escapeHtml(booking.adminComment) : '<em>Нет комментария</em>';
+      cell.appendChild(adminDiv);
     }
-    row.innerHTML += `
-        <td data-label="Комментарий пользователя" class="user-comment-cell" data-key="${booking.key}">
-          <div class="history-comment ${canEditComment ? 'editable' : 'disabled'}" data-key="${booking.key}" data-can-edit="${canEditComment}" data-login="${booking.login}" data-is-past="${booking.isPast}">
-            ${commentText ? escapeHtml(commentText) : '<em>Нет комментария</em>'}
-          </div>
-          <div class="edit-info-history">${editInfo}</div>
-        </td>
-    `;
-    if (isAdminUser) {
-      const adminComment = booking.adminComment || '';
-      row.innerHTML += `
-        <td data-label="Комментарий администратора">
-          <div class="history-comment admin-comment editable" data-key="${booking.key}" data-type="admin">
-            ${adminComment ? escapeHtml(adminComment) : '<em>Нет комментария</em>'}
-          </div>
-        </td>
-      `;
-    }
-    tbody.appendChild(row);
   }
 
-  if (isAdminUser) {
-    const searchInput = document.getElementById('historySearchInput');
-    const searchBtn = document.getElementById('historySearchBtn');
-    const resetBtn = document.getElementById('historyResetBtn');
-    if (searchBtn) searchBtn.addEventListener('click', () => {
-      currentHistorySearch = searchInput?.value.trim() || '';
-      currentHistoryPage = 1;
-      loadAndRenderHistory();
-    });
-    if (resetBtn) resetBtn.addEventListener('click', () => {
-      if (searchInput) searchInput.value = '';
-      currentHistorySearch = '';
-      currentHistoryPage = 1;
-      loadAndRenderHistory();
-    });
-    if (searchInput) searchInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        currentHistorySearch = searchInput.value.trim();
-        currentHistoryPage = 1;
-        loadAndRenderHistory();
-      }
-    });
-  }
+  const doctorSelect = document.getElementById('historyDoctorSelect');
+  const searchInput = document.getElementById('historySearchInput');
+  const searchBtn = document.getElementById('historySearchBtn');
+  const resetBtn = document.getElementById('historyResetBtn');
+
+  const applyFilters = () => {
+    currentHistoryDoctor = doctorSelect?.value || '';
+    currentHistorySearch = searchInput?.value.trim() || '';
+    currentHistoryPage = 1;
+    loadAndRenderHistory();
+  };
+
+  if (doctorSelect) doctorSelect.addEventListener('change', applyFilters);
+  if (searchBtn) searchBtn.addEventListener('click', applyFilters);
+  if (resetBtn) resetBtn.addEventListener('click', () => { if (doctorSelect) doctorSelect.value = ''; if (searchInput) searchInput.value = ''; currentHistoryDoctor = ''; currentHistorySearch = ''; currentHistoryPage = 1; loadAndRenderHistory(); });
+  if (searchInput) searchInput.addEventListener('keypress', e => { if (e.key === 'Enter') applyFilters(); });
 
   const paginationDiv = document.getElementById('historyPagination');
-  if (pages > 1) {
-    let paginationHtml = '';
-    paginationHtml += `<button ${page === 1 ? 'disabled' : ''} data-page="${page-1}">← Назад</button>`;
-    for (let i = 1; i <= pages; i++) {
-      if (i === 1 || i === pages || (i >= page-2 && i <= page+2)) {
-        paginationHtml += `<button class="${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
-      } else if (i === page-3 || i === page+3) {
-        paginationHtml += `<span>...</span>`;
+  if (paginationDiv) {
+    if (pages > 1) {
+      let paginationHtml = '';
+      paginationHtml += `<button ${page === 1 ? 'disabled' : ''} data-page="${page-1}">← Назад</button>`;
+      for (let i = 1; i <= pages; i++) {
+        if (i === 1 || i === pages || (i >= page-2 && i <= page+2)) paginationHtml += `<button class="${i === page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+        else if (i === page-3 || i === page+3) paginationHtml += `<span>...</span>`;
       }
-    }
-    paginationHtml += `<button ${page === pages ? 'disabled' : ''} data-page="${page+1}">Вперёд →</button>`;
-    paginationDiv.innerHTML = paginationHtml;
-    paginationDiv.querySelectorAll('button[data-page]').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        const newPage = parseInt(e.currentTarget.getAttribute('data-page'));
-        if (!isNaN(newPage) && newPage !== page) {
-          currentHistoryPage = newPage;
-          await loadAndRenderHistory();
-        }
-      });
-    });
+      paginationHtml += `<button ${page === pages ? 'disabled' : ''} data-page="${page+1}">Вперёд →</button>`;
+      paginationDiv.innerHTML = paginationHtml;
+      paginationDiv.querySelectorAll('button[data-page]').forEach(btn => btn.addEventListener('click', async e => { const np = parseInt(e.currentTarget.dataset.page); if (!isNaN(np) && np !== page) { currentHistoryPage = np; await loadAndRenderHistory(); } }));
+    } else paginationDiv.innerHTML = '';
   }
 
   attachHistoryCommentHandlers();
   if (isAdminUser) {
-    document.querySelectorAll('#historyTableBody .admin-comment').forEach(div => {
-      div.removeEventListener('click', adminCommentClickHandler);
-      div.addEventListener('click', adminCommentClickHandler);
-    });
-    document.querySelectorAll('#historyTableBody .success-checkbox').forEach(cb => {
-      cb.removeEventListener('change', successCheckboxChangeHandler);
-      cb.addEventListener('change', successCheckboxChangeHandler);
-    });
+    document.querySelectorAll('#historyTableBody .admin-comment').forEach(div => { div.removeEventListener('click', adminCommentClickHandler); div.addEventListener('click', adminCommentClickHandler); });
+    document.querySelectorAll('#historyTableBody .success-checkbox').forEach(cb => { cb.removeEventListener('change', successCheckboxChangeHandler); cb.addEventListener('change', successCheckboxChangeHandler); });
   }
 }
 
 function attachHistoryCommentHandlers() {
   const commentDivs = document.querySelectorAll('#historyTableBody .history-comment.editable:not(.admin-comment)');
-  commentDivs.forEach(div => {
-    div.removeEventListener('click', historyCommentClickHandler);
-    div.addEventListener('click', historyCommentClickHandler);
-  });
+  commentDivs.forEach(div => { div.removeEventListener('click', historyCommentClickHandler); div.addEventListener('click', historyCommentClickHandler); });
 }
 
 async function closeCurrentEditing(saveChanges) {
   if (!_currentEditingData) return;
-  const { div, cancelEdit, saveAndClose, textarea, currentText } = _currentEditingData;
+  const { cancelEdit, saveAndClose, textarea, currentText } = _currentEditingData;
   const newText = textarea.value;
-  if (saveChanges) {
-    if (newText.trim() !== currentText.trim()) {
-      await saveAndClose();
-    } else {
-      cancelEdit();
-    }
-  } else {
-    cancelEdit();
-  }
+  if (saveChanges) { if (newText.trim() !== currentText.trim()) await saveAndClose(); else cancelEdit(); }
+  else cancelEdit();
   _currentEditingData = null;
-  if (_historyOutsideHandler) {
-    document.removeEventListener('click', _historyOutsideHandler);
-    _historyOutsideHandler = null;
-  }
+  if (_historyOutsideHandler) { document.removeEventListener('click', _historyOutsideHandler); _historyOutsideHandler = null; }
 }
 
 async function closeCurrentAdminEditing(saveChanges) {
   if (!_currentAdminEditingData) return;
-  const { div, cancelEdit, saveAndClose, textarea, currentText } = _currentAdminEditingData;
+  const { cancelEdit, saveAndClose, textarea, currentText } = _currentAdminEditingData;
   const newText = textarea.value;
-  if (saveChanges) {
-    if (newText.trim() !== currentText.trim()) {
-      await saveAndClose();
-    } else {
-      cancelEdit();
-    }
-  } else {
-    cancelEdit();
-  }
+  if (saveChanges) { if (newText.trim() !== currentText.trim()) await saveAndClose(); else cancelEdit(); }
+  else cancelEdit();
   _currentAdminEditingData = null;
-  if (_historyOutsideHandler) {
-    document.removeEventListener('click', _historyOutsideHandler);
-    _historyOutsideHandler = null;
-  }
+  if (_historyOutsideHandler) { document.removeEventListener('click', _historyOutsideHandler); _historyOutsideHandler = null; }
 }
 
 async function historyCommentClickHandler(e) {
@@ -608,318 +572,142 @@ async function historyCommentClickHandler(e) {
   if (_currentAdminEditingData) {
     const { textarea, currentText } = _currentAdminEditingData;
     const newText = textarea.value;
-    if (newText.trim() !== currentText.trim()) {
-      const answer = confirm('Есть несохранённые изменения в комментарии администратора. Сохранить?');
-      if (answer) {
-        await closeCurrentAdminEditing(true);
-      } else {
-        await closeCurrentAdminEditing(false);
-      }
-    } else {
-      await closeCurrentAdminEditing(false);
-    }
+    if (newText.trim() !== currentText.trim()) await (confirm('Сохранить изменения в комментарии администратора?') ? closeCurrentAdminEditing(true) : closeCurrentAdminEditing(false));
+    else await closeCurrentAdminEditing(false);
   }
-
   if (_currentEditingData && _currentEditingData.div !== div) {
     const { textarea, currentText } = _currentEditingData;
     const newText = textarea.value;
-    if (newText.trim() !== currentText.trim()) {
-      const answer = confirm('Есть несохранённые изменения в другом комментарии. Сохранить?');
-      if (answer) {
-        await closeCurrentEditing(true);
-      } else {
-        await closeCurrentEditing(false);
-      }
-    } else {
-      await closeCurrentEditing(false);
-    }
+    if (newText.trim() !== currentText.trim()) await (confirm('Сохранить изменения в другом комментарии?') ? closeCurrentEditing(true) : closeCurrentEditing(false));
+    else await closeCurrentEditing(false);
   }
 
   const key = div.getAttribute('data-key');
-  if (!key) {
-    showToast('Ошибка: ключ комментария не найден');
-    return;
-  }
-
+  if (!key) { showToast('Ошибка: ключ комментария не найден'); return; }
   const canEdit = div.getAttribute('data-can-edit') === 'true';
-  if (!canEdit) {
-    showToast('Вы не можете редактировать этот комментарий');
-    return;
-  }
+  if (!canEdit) { showToast('Вы не можете редактировать этот комментарий'); return; }
 
   let currentText = div.innerText.trim();
   if (currentText === 'Нет комментария') currentText = '';
-
   const originalHtml = div.innerHTML;
   const ownerLogin = div.getAttribute('data-login');
   const isPast = div.getAttribute('data-is-past') === 'true';
 
-  const editArea = document.createElement('div');
-  editArea.className = 'comment-edit-area-history';
-  editArea.innerHTML = `
-    <textarea class="comment-textarea-history">${escapeHtml(currentText)}</textarea>
-    <div class="comment-buttons-history">
-      <button class="comment-save-btn-history">💾 Сохранить</button>
-      <button class="comment-cancel-btn-history">❌ Отмена</button>
-    </div>
-  `;
-  div.innerHTML = '';
-  div.appendChild(editArea);
-  const textarea = editArea.querySelector('textarea');
-  const saveBtn = editArea.querySelector('.comment-save-btn-history');
-  const cancelBtn = editArea.querySelector('.comment-cancel-btn-history');
+  const editArea = document.createElement('div'); editArea.className = 'comment-edit-area-history';
+  editArea.innerHTML = `<textarea class="comment-textarea-history">${escapeHtml(currentText)}</textarea><div class="comment-buttons-history"><button class="comment-save-btn-history">💾 Сохранить</button><button class="comment-cancel-btn-history">❌ Отмена</button></div>`;
+  div.innerHTML = ''; div.appendChild(editArea);
+  const textarea = editArea.querySelector('textarea'); const saveBtn = editArea.querySelector('.comment-save-btn-history'); const cancelBtn = editArea.querySelector('.comment-cancel-btn-history');
 
-  const cancelEdit = () => {
-    div.innerHTML = originalHtml;
-    div.classList.add('editable');
-    div.removeEventListener('click', historyCommentClickHandler);
-    div.addEventListener('click', historyCommentClickHandler);
-    _currentEditingData = null;
-    if (_historyOutsideHandler) {
-      document.removeEventListener('click', _historyOutsideHandler);
-      _historyOutsideHandler = null;
-    }
-  };
-
+  const cancelEdit = () => { div.innerHTML = originalHtml; div.classList.add('editable'); div.removeEventListener('click', historyCommentClickHandler); div.addEventListener('click', historyCommentClickHandler); _currentEditingData = null; if (_historyOutsideHandler) { document.removeEventListener('click', _historyOutsideHandler); _historyOutsideHandler = null; } };
   const saveCommentHandler = async () => {
     const newText = textarea.value;
-    if (newText.trim() === currentText.trim()) {
-      cancelEdit();
-      return;
-    }
-
+    if (newText.trim() === currentText.trim()) { cancelEdit(); return; }
     const [date, time] = key.split('|');
-    if (!date || !time) {
-      showToast('Ошибка: некорректный ключ слота');
-      cancelEdit();
-      return;
-    }
-
+    if (!date || !time) { showToast('Ошибка: некорректный ключ слота'); cancelEdit(); return; }
     try {
-      const result = await updateComment(date, time, newText);
-      showToast(result.message || 'Комментарий сохранён');
-
+      const result = await updateComment(date, time, newText); showToast(result.message || 'Комментарий сохранён');
       const commentData = await loadComment(key);
       const displayText = commentData.text || '';
       const editInfoText = commentData.lastEditedBy ? `✏️ ${escapeHtml(commentData.lastEditedBy)}, ${escapeHtml(commentData.lastEditedAt)}` : '';
-
       const canEditAfter = isAdminUser || (!isPast && ownerLogin === currentUser);
-
       const commentCell = div.closest('.user-comment-cell');
       if (commentCell) {
-        commentCell.innerHTML = `
-          <div class="history-comment ${canEditAfter ? 'editable' : 'disabled'}" data-key="${key}" data-can-edit="${canEditAfter}" data-login="${ownerLogin}" data-is-past="${isPast}">
-            ${displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'}
-          </div>
-          <div class="edit-info-history">${editInfoText}</div>
-        `;
+        commentCell.innerHTML = `<div class="history-comment ${canEditAfter ? 'editable' : 'disabled'}" data-key="${key}" data-can-edit="${canEditAfter}" data-login="${ownerLogin}" data-is-past="${isPast}">${displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'}</div><div class="edit-info-history">${editInfoText}</div>`;
         const newCommentDiv = commentCell.querySelector('.history-comment');
-        if (newCommentDiv && newCommentDiv.classList.contains('editable')) {
-          newCommentDiv.addEventListener('click', historyCommentClickHandler);
-        }
-      } else {
-        div.innerHTML = displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>';
-        div.classList.add(canEditAfter ? 'editable' : 'disabled');
-        if (canEditAfter) div.addEventListener('click', historyCommentClickHandler);
-        const editInfoSpan = div.parentElement?.querySelector('.edit-info-history');
-        if (editInfoSpan) editInfoSpan.textContent = editInfoText;
-      }
-    } catch (err) {
-      showToast(err.message || 'Ошибка сохранения');
-    }
+        if (newCommentDiv && newCommentDiv.classList.contains('editable')) newCommentDiv.addEventListener('click', historyCommentClickHandler);
+      } else { div.innerHTML = displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'; div.classList.add(canEditAfter ? 'editable' : 'disabled'); if (canEditAfter) div.addEventListener('click', historyCommentClickHandler); const editInfoSpan = div.parentElement?.querySelector('.edit-info-history'); if (editInfoSpan) editInfoSpan.textContent = editInfoText; }
+    } catch (err) { showToast(err.message || 'Ошибка сохранения'); }
     cancelEdit();
   };
-
   const outsideClickHandler = (event) => {
     if (editArea && editArea.contains(event.target)) return;
     if (event.target.closest('.comment-save-btn-history') || event.target.closest('.comment-cancel-btn-history')) return;
     if (event.target.closest('.history-comment.editable')) return;
-    
     const newText = textarea.value;
-    if (newText.trim() !== currentText.trim()) {
-      if (confirm('Сохранить изменения?')) {
-        saveCommentHandler();
-      } else {
-        cancelEdit();
-      }
-    } else {
-      cancelEdit();
-    }
+    if (newText.trim() !== currentText.trim()) { if (confirm('Сохранить изменения?')) saveCommentHandler(); else cancelEdit(); }
+    else cancelEdit();
   };
-
-  saveBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    saveCommentHandler();
-  });
-  cancelBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    cancelEdit();
-  });
-
-  if (_historyOutsideHandler) {
-    document.removeEventListener('click', _historyOutsideHandler);
-  }
+  saveBtn.addEventListener('click', (e) => { e.stopPropagation(); saveCommentHandler(); });
+  cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); cancelEdit(); });
+  if (_historyOutsideHandler) document.removeEventListener('click', _historyOutsideHandler);
   _historyOutsideHandler = outsideClickHandler;
   document.addEventListener('click', _historyOutsideHandler);
-
-  _currentEditingData = {
-    div,
-    cancelEdit,
-    saveAndClose: saveCommentHandler,
-    textarea,
-    currentText
-  };
-
+  _currentEditingData = { div, cancelEdit, saveAndClose: saveCommentHandler, textarea, currentText };
   textarea.focus();
 }
 
 async function adminCommentClickHandler(e) {
-    e.stopPropagation();
-    const div = e.currentTarget;
-    if (div.querySelector('.comment-edit-area-history')) return;
+  e.stopPropagation();
+  const div = e.currentTarget;
+  if (div.querySelector('.comment-edit-area-history')) return;
 
-    if (_currentEditingData) {
-        const { textarea, currentText } = _currentEditingData;
-        const newText = textarea.value;
-        if (newText.trim() !== currentText.trim()) {
-            const answer = confirm('Есть несохранённые изменения в комментарии пользователя. Сохранить?');
-            if (answer) {
-                await closeCurrentEditing(true);
-            } else {
-                await closeCurrentEditing(false);
-            }
-        } else {
-            await closeCurrentEditing(false);
-        }
-    }
+  if (_currentEditingData) {
+    const { textarea, currentText } = _currentEditingData;
+    const newText = textarea.value;
+    if (newText.trim() !== currentText.trim()) await (confirm('Сохранить изменения в комментарии пользователя?') ? closeCurrentEditing(true) : closeCurrentEditing(false));
+    else await closeCurrentEditing(false);
+  }
+  if (_currentAdminEditingData && _currentAdminEditingData.div !== div) {
+    const { textarea, currentText } = _currentAdminEditingData;
+    const newText = textarea.value;
+    if (newText.trim() !== currentText.trim()) await (confirm('Сохранить изменения в другом комментарии администратора?') ? closeCurrentAdminEditing(true) : closeCurrentAdminEditing(false));
+    else await closeCurrentAdminEditing(false);
+  }
 
-    if (_currentAdminEditingData && _currentAdminEditingData.div !== div) {
-        const { textarea, currentText } = _currentAdminEditingData;
-        const newText = textarea.value;
-        if (newText.trim() !== currentText.trim()) {
-            const answer = confirm('Есть несохранённые изменения в другом комментарии администратора. Сохранить?');
-            if (answer) {
-                await closeCurrentAdminEditing(true);
-            } else {
-                await closeCurrentAdminEditing(false);
-            }
-        } else {
-            await closeCurrentAdminEditing(false);
-        }
-    }
+  const key = div.getAttribute('data-key');
+  if (!key) return;
+  const [date, time] = key.split('|');
+  let currentText = div.innerText.trim();
+  if (currentText === 'Нет комментария') currentText = '';
+  const originalHtml = div.innerHTML;
 
-    const key = div.getAttribute('data-key');
-    if (!key) return;
-    const [date, time] = key.split('|');
-    let currentText = div.innerText.trim();
-    if (currentText === 'Нет комментария') currentText = '';
-    const originalHtml = div.innerHTML;
+  const editArea = document.createElement('div'); editArea.className = 'comment-edit-area-history';
+  editArea.innerHTML = `<textarea class="comment-textarea-history">${escapeHtml(currentText)}</textarea><div class="comment-buttons-history"><button class="comment-save-btn-history">💾 Сохранить</button><button class="comment-cancel-btn-history">❌ Отмена</button></div>`;
+  div.innerHTML = ''; div.appendChild(editArea);
+  const textarea = editArea.querySelector('textarea'); const saveBtn = editArea.querySelector('.comment-save-btn-history'); const cancelBtn = editArea.querySelector('.comment-cancel-btn-history');
 
-    const editArea = document.createElement('div');
-    editArea.className = 'comment-edit-area-history';
-    editArea.innerHTML = `
-        <textarea class="comment-textarea-history">${escapeHtml(currentText)}</textarea>
-        <div class="comment-buttons-history">
-            <button class="comment-save-btn-history">💾 Сохранить</button>
-            <button class="comment-cancel-btn-history">❌ Отмена</button>
-        </div>
-    `;
-    div.innerHTML = '';
-    div.appendChild(editArea);
-    const textarea = editArea.querySelector('textarea');
-    const saveBtn = editArea.querySelector('.comment-save-btn-history');
-    const cancelBtn = editArea.querySelector('.comment-cancel-btn-history');
-
-    const closeEditMode = (restoreOriginal = true) => {
-        if (restoreOriginal) {
-            div.innerHTML = originalHtml;
-            div.classList.add('editable', 'admin-comment');
-        } else {
-            div.classList.add('editable', 'admin-comment');
-        }
-        div.removeEventListener('click', adminCommentClickHandler);
-        div.addEventListener('click', adminCommentClickHandler);
-        _currentAdminEditingData = null;
-        if (_historyOutsideHandler) {
-            document.removeEventListener('click', _historyOutsideHandler);
-            _historyOutsideHandler = null;
-        }
-    };
-
-    const cancelEdit = () => {
-        closeEditMode(true);
-    };
-
-    const saveHandler = async () => {
-        const newText = textarea.value;
-        if (newText.trim() === currentText.trim()) {
-            cancelEdit();
-            return;
-        }
-        try {
-            await updateAdminMeetingData(date, time, newText, null);
-            div.innerHTML = newText ? escapeHtml(newText) : '<em>Нет комментария</em>';
-            closeEditMode(false);
-            showToast('Админ-комментарий сохранён');
-        } catch(err) {
-            showToast('Ошибка сохранения');
-            cancelEdit();
-        }
-    };
-
-    const outsideClickHandler = (event) => {
-        if (editArea && editArea.contains(event.target)) return;
-        if (event.target.closest('.comment-save-btn-history') || event.target.closest('.comment-cancel-btn-history')) return;
-        if (event.target.closest('.history-comment.editable')) return;
-
-        const newText = textarea.value;
-        if (newText.trim() !== currentText.trim()) {
-            if (confirm('Сохранить изменения?')) {
-                saveHandler();
-            } else {
-                cancelEdit();
-            }
-        } else {
-            cancelEdit();
-        }
-    };
-
-    saveBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        saveHandler();
-    });
-    cancelBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        cancelEdit();
-    });
-
-    if (_historyOutsideHandler) {
-        document.removeEventListener('click', _historyOutsideHandler);
-    }
-    _historyOutsideHandler = outsideClickHandler;
-    document.addEventListener('click', _historyOutsideHandler);
-
-    _currentAdminEditingData = {
-        div,
-        cancelEdit,
-        saveAndClose: saveHandler,
-        textarea,
-        currentText
-    };
-
-    textarea.focus();
+  const closeEditMode = (restoreOriginal = true) => { if (restoreOriginal) div.innerHTML = originalHtml; div.classList.add('editable', 'admin-comment'); div.removeEventListener('click', adminCommentClickHandler); div.addEventListener('click', adminCommentClickHandler); _currentAdminEditingData = null; if (_historyOutsideHandler) { document.removeEventListener('click', _historyOutsideHandler); _historyOutsideHandler = null; } };
+  const cancelEdit = () => closeEditMode(true);
+  const saveHandler = async () => {
+    const newText = textarea.value;
+    if (newText.trim() === currentText.trim()) { cancelEdit(); return; }
+    try {
+      await updateAdminMeetingData(date, time, newText, null);
+      div.innerHTML = newText ? escapeHtml(newText) : '<em>Нет комментария</em>';
+      closeEditMode(false);
+      showToast('Админ-комментарий сохранён');
+    } catch(err) { showToast('Ошибка сохранения'); cancelEdit(); }
+  };
+  const outsideClickHandler = (event) => {
+    if (editArea && editArea.contains(event.target)) return;
+    if (event.target.closest('.comment-save-btn-history') || event.target.closest('.comment-cancel-btn-history')) return;
+    if (event.target.closest('.history-comment.editable')) return;
+    const newText = textarea.value;
+    if (newText.trim() !== currentText.trim()) { if (confirm('Сохранить изменения?')) saveHandler(); else cancelEdit(); }
+    else cancelEdit();
+  };
+  saveBtn.addEventListener('click', (e) => { e.stopPropagation(); saveHandler(); });
+  cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); cancelEdit(); });
+  if (_historyOutsideHandler) document.removeEventListener('click', _historyOutsideHandler);
+  _historyOutsideHandler = outsideClickHandler;
+  document.addEventListener('click', _historyOutsideHandler);
+  _currentAdminEditingData = { div, cancelEdit, saveAndClose: saveHandler, textarea, currentText };
+  textarea.focus();
 }
 
 async function successCheckboxChangeHandler(e) {
-    const cb = e.currentTarget;
-    const key = cb.getAttribute('data-key');
-    if (!key) return;
-    const [date, time] = key.split('|');
-    const successMeeting = cb.checked;
-    try {
-        await updateAdminMeetingData(date, time, null, successMeeting);
-    } catch(err) {
-        showToast('Ошибка обновления статуса');
-        cb.checked = !cb.checked;
-    }
+  const cb = e.currentTarget;
+  const key = cb.getAttribute('data-key');
+  if (!key) return;
+  const [date, time] = key.split('|');
+  const successMeeting = cb.checked;
+  try { await updateAdminMeetingData(date, time, null, successMeeting); } catch(err) { showToast('Ошибка обновления статуса'); cb.checked = !cb.checked; }
 }
+
+// Глобальная привязка функций, которые могут вызываться извне
+window.showAuthModal = showAuthModal;
+window.showHistoryModal = showHistoryModal;
+window.showRegisterModal = showRegisterModal;
+window.showEditUserModal = showEditUserModal;
+window.showEditDoctorModal = showEditDoctorModal;
+window.showUsersManagementModal = showUsersManagementModal;

@@ -826,6 +826,31 @@ body {
     font-size: 0.65rem;
     margin-top: 0.2rem;
 }
+/* Добавить в конец файла */
+.history-doctor-select {
+    padding: 0.4rem 1rem;
+    border-radius: 2rem;
+    border: 2px solid #e2e8f0;
+    background: white;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.history-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+.doctor-tab.active {
+    background: #3b82f6;
+    color: white;
+}
+.doctor-tab-wrapper.active {
+    background: #3b82f6;
+}
+.doctor-tab-wrapper.active .doctor-tab {
+    color: white;
+}
 .doctor-tabs {
     display: flex;
     gap: 0.5rem;

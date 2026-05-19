@@ -168,9 +168,12 @@ function renderFullApp() {
       }
     });
   }
-  document.getElementById('historyBtn')?.addEventListener('click', () => showHistoryModal());
+  const historyBtn = document.getElementById('historyBtn');
+  if (historyBtn) {
+    historyBtn.addEventListener('click', () => showHistoryModal('', ''));
+  }
 
-  // Переключение врачей
+  // Переключение врачей (исправленная подсветка)
   document.querySelectorAll('.doctor-tab').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       const doctorId = btn.dataset.doctor;
@@ -180,16 +183,23 @@ function renderFullApp() {
       highlightedBookingKey = null;
       editingCommentKey = null;
       await loadBookingsForDoctor(currentDoctor);
-      document.querySelectorAll('.doctor-tab-wrapper, .doctor-tab').forEach(t => {
-        if (t.classList) t.classList.remove('active');
-        else if (t.parentElement) t.parentElement.classList.remove('active');
+      
+      // Убираем active со всех врачей (учитываем обёртки для админа)
+      document.querySelectorAll('.doctor-tab, .doctor-tab-wrapper').forEach(el => {
+        el.classList.remove('active');
       });
-      if (btn.parentElement && btn.parentElement.classList) btn.parentElement.classList.add('active');
-      else btn.classList.add('active');
+      // Добавляем active: если есть обёртка (для админа), то ей, иначе самой кнопке
+      const wrapper = btn.closest('.doctor-tab-wrapper');
+      if (wrapper) {
+        wrapper.classList.add('active');
+      } else {
+        btn.classList.add('active');
+      }
+      
       updateInfoPanel();
       renderMainContent();
       renderBookingsList();
-      // Обновить отображение настроек врача (интервал, часы, техперерыв)
+      // Обновить отображение настроек врача
       const newSettings = doctorsList.find(d => d.id === currentDoctor);
       const settingsDiv = document.getElementById('doctorSettingsInfo');
       if (settingsDiv && newSettings) {
@@ -203,7 +213,6 @@ function renderFullApp() {
 
   // Управление врачами (админ)
   if (isAdminUser) {
-    // Редактирование врача (открываем модальное окно)
     document.querySelectorAll('.doctor-edit-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -211,7 +220,6 @@ function renderFullApp() {
         showEditDoctorModal(id);
       });
     });
-    // Удаление врача
     document.querySelectorAll('.doctor-delete-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -235,7 +243,6 @@ function renderFullApp() {
         }
       });
     });
-    // Добавление врача
     const addBtn = document.getElementById('addDoctorBtn');
     if (addBtn) {
       addBtn.addEventListener('click', async () => {

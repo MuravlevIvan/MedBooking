@@ -283,8 +283,9 @@ async function fetchPendingList() {
   return pendingUsers;
 }
 
-async function fetchBookingHistory(page = 1, search = '') {
-  const params = new URLSearchParams({ page, limit: 30, doctor: currentDoctor });
+// ИЗМЕНЁННАЯ ФУНКЦИЯ fetchBookingHistory
+async function fetchBookingHistory(page = 1, search = '', doctor = '') {
+  const params = new URLSearchParams({ page, limit: 30, doctor });
   if (search) params.append('search', search);
   return apiFetch(`/api/bookings/history?${params.toString()}`, { method: 'GET' });
 }

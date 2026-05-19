@@ -21,3 +21,8 @@ let bookingElementsCache = new Map();
 // Врачи и их настройки
 let currentDoctor = 'doctor1';
 let doctorsList = []; // каждый объект: {id, name, slotInterval, startHour, endHour, breakStart, breakEnd}
+
+// Переменные для истории бронирований (фильтрация по врачу и поиску)
+let currentHistoryPage = 1;
+let currentHistorySearch = '';
+let currentHistoryDoctor = '';   // '' означает "все врачи"
