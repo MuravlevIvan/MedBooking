@@ -66,7 +66,14 @@ socket.on('comment_updated', (data) => {
 });
 
 socket.on('doctors_updated', async () => {
+    // Если обновление вызвано локальным действием этого клиента – игнорируем событие
+    if (ignoreNextDoctorsUpdate) {
+        ignoreNextDoctorsUpdate = false;
+        return;
+    }
     await loadDoctors();
+    selectedSlots.clear();
+    highlightedBookingKey = null;
     if (!doctorsList.some(d => d.id === currentDoctor)) {
         currentDoctor = doctorsList[0]?.id || 'doctor1';
     }

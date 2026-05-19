@@ -26,3 +26,6 @@ let doctorsList = []; // каждый объект: {id, name, slotInterval, sta
 let currentHistoryPage = 1;
 let currentHistorySearch = '';
 let currentHistoryDoctor = '';   // '' означает "все врачи"
+
+// Флаг для предотвращения двойной обработки событий doctors_updated
+let ignoreNextDoctorsUpdate = false;

@@ -73,13 +73,11 @@ async function deleteDoctor(id) {
 async function loadInitialData() {
   highlightedBookingKey = null;
   
-  // ========== ДОБАВЛЕНО: загрузка заголовка ==========
   if (typeof loadTitle === 'function') {
     await loadTitle();
   } else {
     console.warn('loadTitle не определена, заголовок не будет загружен');
   }
-  // ===================================================
   
   await loadDoctors();
   const me = await apiFetch('/api/me').catch(() => ({ login: null, is_admin: false }));
@@ -257,14 +255,15 @@ async function cancelBooking(dateStr, timeStr) {
   } catch (e) {}
 }
 
-async function loadComment(key) {
+// ===== ИСПРАВЛЕНО: добавлен параметр doctor =====
+async function loadComment(key, doctor = currentDoctor) {
   const [date, time] = key.split('|');
-  try { return await apiFetch(`/api/comments/${date}/${time}?doctor=${currentDoctor}`); }
+  try { return await apiFetch(`/api/comments/${date}/${time}?doctor=${doctor}`); }
   catch(e) { return { text: '', lastEditedBy: null, lastEditedAt: null }; }
 }
 
-async function updateComment(date, time, text) {
-  return apiFetch(`/api/comments/${date}/${time}?doctor=${currentDoctor}`, {
+async function updateComment(date, time, text, doctor = currentDoctor) {
+  return apiFetch(`/api/comments/${date}/${time}?doctor=${doctor}`, {
     method: 'PUT',
     body: JSON.stringify({ text })
   });

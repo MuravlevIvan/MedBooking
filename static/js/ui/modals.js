@@ -498,7 +498,9 @@ function renderHistoryContent(data) {
     }
     cell = row.insertCell(); cell.setAttribute('data-label', 'Комментарий пользователя'); cell.className = 'user-comment-cell'; cell.dataset.key = booking.key;
     const commentDiv = document.createElement('div'); commentDiv.className = `history-comment ${canEditComment ? 'editable' : 'disabled'}`;
-    commentDiv.dataset.key = booking.key; commentDiv.dataset.canEdit = canEditComment; commentDiv.dataset.login = booking.login; commentDiv.dataset.isPast = booking.isPast;
+    commentDiv.dataset.key = booking.key;
+    commentDiv.dataset.doctor = booking.doctor;   // <-- ДОБАВЛЯЕМ data-doctor
+    commentDiv.dataset.canEdit = canEditComment; commentDiv.dataset.login = booking.login; commentDiv.dataset.isPast = booking.isPast;
     commentDiv.innerHTML = commentText ? escapeHtml(commentText) : '<em>Нет комментария</em>';
     cell.appendChild(commentDiv);
     const editInfoSpan = document.createElement('div'); editInfoSpan.className = 'edit-info-history'; editInfoSpan.textContent = editInfo;
@@ -576,6 +578,7 @@ async function closeCurrentAdminEditing(saveChanges) {
   if (_historyOutsideHandler) { document.removeEventListener('click', _historyOutsideHandler); _historyOutsideHandler = null; }
 }
 
+// ===== ИСПРАВЛЕНО: используем doctor из data-doctor =====
 async function historyCommentClickHandler(e) {
   e.stopPropagation();
   const div = e.currentTarget;
@@ -595,6 +598,7 @@ async function historyCommentClickHandler(e) {
   }
 
   const key = div.getAttribute('data-key');
+  const doctor = div.getAttribute('data-doctor');   // <-- получаем doctor
   if (!key) { showToast('Ошибка: ключ комментария не найден'); return; }
   const canEdit = div.getAttribute('data-can-edit') === 'true';
   if (!canEdit) { showToast('Вы не можете редактировать этот комментарий'); return; }
@@ -617,14 +621,16 @@ async function historyCommentClickHandler(e) {
     const [date, time] = key.split('|');
     if (!date || !time) { showToast('Ошибка: некорректный ключ слота'); cancelEdit(); return; }
     try {
-      const result = await updateComment(date, time, newText); showToast(result.message || 'Комментарий сохранён');
-      const commentData = await loadComment(key);
+      // Передаём doctor в updateComment
+      const result = await updateComment(date, time, newText, doctor);
+      showToast(result.message || 'Комментарий сохранён');
+      const commentData = await loadComment(key, doctor);
       const displayText = commentData.text || '';
       const editInfoText = commentData.lastEditedBy ? `✏️ ${escapeHtml(commentData.lastEditedBy)}, ${escapeHtml(commentData.lastEditedAt)}` : '';
       const canEditAfter = isAdminUser || (!isPast && ownerLogin === currentUser);
       const commentCell = div.closest('.user-comment-cell');
       if (commentCell) {
-        commentCell.innerHTML = `<div class="history-comment ${canEditAfter ? 'editable' : 'disabled'}" data-key="${key}" data-can-edit="${canEditAfter}" data-login="${ownerLogin}" data-is-past="${isPast}">${displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'}</div><div class="edit-info-history">${editInfoText}</div>`;
+        commentCell.innerHTML = `<div class="history-comment ${canEditAfter ? 'editable' : 'disabled'}" data-key="${key}" data-doctor="${doctor}" data-can-edit="${canEditAfter}" data-login="${ownerLogin}" data-is-past="${isPast}">${displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'}</div><div class="edit-info-history">${editInfoText}</div>`;
         const newCommentDiv = commentCell.querySelector('.history-comment');
         if (newCommentDiv && newCommentDiv.classList.contains('editable')) newCommentDiv.addEventListener('click', historyCommentClickHandler);
       } else { div.innerHTML = displayText ? escapeHtml(displayText) : '<em>Нет комментария</em>'; div.classList.add(canEditAfter ? 'editable' : 'disabled'); if (canEditAfter) div.addEventListener('click', historyCommentClickHandler); const editInfoSpan = div.parentElement?.querySelector('.edit-info-history'); if (editInfoSpan) editInfoSpan.textContent = editInfoText; }
@@ -667,8 +673,8 @@ async function adminCommentClickHandler(e) {
   }
 
   const key = div.getAttribute('data-key');
-  if (!key) return;
   const doctor = div.getAttribute('data-doctor');
+  if (!key) return;
   const [date, time] = key.split('|');
   let currentText = div.innerText.trim();
   if (currentText === 'Нет комментария') currentText = '';
@@ -723,7 +729,7 @@ async function successCheckboxChangeHandler(e) {
   }
 }
 
-// ---------- Редактирование заголовка страницы (админ) — исправленная версия с DOM ----------
+// ---------- Редактирование заголовка страницы (админ) ----------
 function showEditTitleModal() {
     const modalOverlay = document.createElement('div');
     modalOverlay.className = 'modal-overlay';

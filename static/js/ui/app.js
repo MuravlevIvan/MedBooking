@@ -257,6 +257,7 @@ function renderFullApp() {
         }
         if (confirm(`Удалить Дорожку "${doctorsList.find(d => d.id === id)?.name}"? Все его бронирования и комментарии будут удалены.`)) {
           try {
+            ignoreNextDoctorsUpdate = true;
             await deleteDoctor(id);
             await loadDoctors();
             if (!doctorsList.some(d => d.id === currentDoctor)) {
@@ -266,6 +267,8 @@ function renderFullApp() {
             await loadBookingsForDoctor(currentDoctor);
           } catch (err) {
             showToast(err.message);
+          } finally {
+            setTimeout(() => { ignoreNextDoctorsUpdate = false; }, 200);
           }
         }
       });
@@ -276,6 +279,7 @@ function renderFullApp() {
         const name = prompt('Введите имя новой дорожки:', 'Новая дорожка');
         if (name && name.trim()) {
           try {
+            ignoreNextDoctorsUpdate = true;
             await createDoctor(name.trim(), 60, 9, 21, '', '');
             await loadDoctors();
             currentDoctor = doctorsList[doctorsList.length - 1]?.id || currentDoctor;
@@ -283,6 +287,8 @@ function renderFullApp() {
             await loadBookingsForDoctor(currentDoctor);
           } catch (err) {
             showToast(err.message);
+          } finally {
+            setTimeout(() => { ignoreNextDoctorsUpdate = false; }, 200);
           }
         }
       });
