@@ -9,15 +9,17 @@ from flask_socketio import SocketIO, emit
 from flask_seasurf import SeaSurf
 import bcrypt
 import sqlite3
+import logging
 
-# ---------------------- Константы ----------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__, static_folder='static')
 
 load_dotenv()
 app.secret_key = os.environ.get('SECRET_KEY')
-
 if not app.secret_key:
-    raise RuntimeError("SECRET_KEY не задан! Укажите переменную окружения SECRET_KEY.")
+    raise RuntimeError("SECRET_KEY не задан!")
 
 app.config['CSRF_USE_SESSIONS'] = False
 app.config['CSRF_COOKIE_NAME'] = 'csrf_token'
@@ -26,14 +28,14 @@ app.config['CSRF_COOKIE_SAMESITE'] = 'Lax'
 csrf = SeaSurf(app)
 
 DATABASE = 'booking.db'
-ADMIN_LOGIN = os.environ.get('ADMIN_LOGIN').strip()
-ADMIN_DEFAULT_PASSWORD = os.environ.get('ADMIN_PASSWORD')
-
-if not ADMIN_LOGIN:
-    raise RuntimeError("ADMIN_LOGIN не задан или пуст!")
+ADMIN_LOGIN = os.environ.get('ADMIN_LOGIN', 'admin').strip()
+ADMIN_DEFAULT_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 
 def _ensure_tables():
     db = sqlite3.connect(DATABASE)
+    db.execute('PRAGMA foreign_keys = ON')
+    
+    # Таблица users
     db.execute('''
         CREATE TABLE IF NOT EXISTS users (
             login TEXT PRIMARY KEY,
@@ -45,6 +47,8 @@ def _ensure_tables():
             email TEXT DEFAULT ''
         )
     ''')
+    
+    # Таблица pending_users
     db.execute('''
         CREATE TABLE IF NOT EXISTS pending_users (
             login TEXT PRIMARY KEY,
@@ -56,49 +60,83 @@ def _ensure_tables():
             email TEXT DEFAULT ''
         )
     ''')
+    
+    # Таблица bookings с составным первичным ключом (slot_key, doctor)
     db.execute('''
         CREATE TABLE IF NOT EXISTS bookings (
-            slot_key TEXT PRIMARY KEY,
+            slot_key TEXT,
             login TEXT NOT NULL,
+            doctor TEXT DEFAULT 'doctor1',
+            PRIMARY KEY (slot_key, doctor),
             FOREIGN KEY (login) REFERENCES users(login)
         )
     ''')
+    
+    # Добавляем колонку doctor, если её нет (миграция для старых БД)
+    cursor = db.cursor()
+    cursor.execute("PRAGMA table_info(bookings)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'doctor' not in columns:
+        logger.info("Миграция: добавляем doctor в bookings...")
+        db.execute("ALTER TABLE bookings ADD COLUMN doctor TEXT DEFAULT 'doctor1'")
+        db.execute("UPDATE bookings SET doctor = 'doctor1' WHERE doctor IS NULL")
+        # Пересоздаём таблицу с составным ключом
+        db.execute("CREATE TABLE bookings_new (slot_key TEXT, login TEXT NOT NULL, doctor TEXT DEFAULT 'doctor1', PRIMARY KEY (slot_key, doctor))")
+        db.execute("INSERT INTO bookings_new (slot_key, login, doctor) SELECT slot_key, login, doctor FROM bookings")
+        db.execute("DROP TABLE bookings")
+        db.execute("ALTER TABLE bookings_new RENAME TO bookings")
+    
+    # Таблица comments
     db.execute('''
         CREATE TABLE IF NOT EXISTS comments (
-            slot_key TEXT PRIMARY KEY,
+            slot_key TEXT,
+            doctor TEXT DEFAULT 'doctor1',
             text TEXT DEFAULT '',
             last_edited_by TEXT,
             last_edited_at TEXT,
-            FOREIGN KEY (slot_key) REFERENCES bookings(slot_key)
+            admin_comment TEXT DEFAULT '',
+            success_meeting BOOLEAN DEFAULT 0,
+            admin_edited_by TEXT,
+            admin_edited_at TEXT,
+            PRIMARY KEY (slot_key, doctor),
+            FOREIGN KEY (slot_key, doctor) REFERENCES bookings(slot_key, doctor)
         )
     ''')
-    if not db.execute('SELECT 1 FROM users WHERE login = ?', (ADMIN_LOGIN,)).fetchone():
-        hashed = bcrypt.hashpw(ADMIN_DEFAULT_PASSWORD.encode(), bcrypt.gensalt()).decode()
-        db.execute('INSERT INTO users (login, password_hash, first_name) VALUES (?, ?, ?)',
-                   (ADMIN_LOGIN, hashed, 'Администратор'))
-    db.commit()
-    db.close()
-
-def _migrate_db():
-    """Добавляет колонки admin_comment, success_meeting и поля редактирования в таблицу comments."""
-    db = sqlite3.connect(DATABASE)
-    cursor = db.cursor()
+    
     cursor.execute("PRAGMA table_info(comments)")
     columns = [col[1] for col in cursor.fetchall()]
-    if 'admin_comment' not in columns:
-        cursor.execute("ALTER TABLE comments ADD COLUMN admin_comment TEXT DEFAULT ''")
-    if 'success_meeting' not in columns:
-        cursor.execute("ALTER TABLE comments ADD COLUMN success_meeting BOOLEAN DEFAULT 0")
-    if 'admin_edited_by' not in columns:
-        cursor.execute("ALTER TABLE comments ADD COLUMN admin_edited_by TEXT")
-    if 'admin_edited_at' not in columns:
-        cursor.execute("ALTER TABLE comments ADD COLUMN admin_edited_at TEXT")
+    if 'doctor' not in columns:
+        logger.info("Миграция: добавляем doctor в comments...")
+        db.execute("ALTER TABLE comments ADD COLUMN doctor TEXT DEFAULT 'doctor1'")
+        db.execute("UPDATE comments SET doctor = 'doctor1' WHERE doctor IS NULL")
+        db.execute("CREATE TABLE comments_new (slot_key TEXT, doctor TEXT DEFAULT 'doctor1', text TEXT DEFAULT '', last_edited_by TEXT, last_edited_at TEXT, admin_comment TEXT DEFAULT '', success_meeting BOOLEAN DEFAULT 0, admin_edited_by TEXT, admin_edited_at TEXT, PRIMARY KEY (slot_key, doctor))")
+        db.execute("INSERT INTO comments_new (slot_key, doctor, text, last_edited_by, last_edited_at, admin_comment, success_meeting, admin_edited_by, admin_edited_at) SELECT slot_key, doctor, text, last_edited_by, last_edited_at, admin_comment, success_meeting, admin_edited_by, admin_edited_at FROM comments")
+        db.execute("DROP TABLE comments")
+        db.execute("ALTER TABLE comments_new RENAME TO comments")
+    
+    # Таблица врачей
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS doctors (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            display_order INTEGER DEFAULT 0
+        )
+    ''')
+    doctors = [('doctor1', 'Врач 1', 1), ('doctor2', 'Врач 2', 2), ('doctor3', 'Врач 3', 3)]
+    for doc_id, name, order in doctors:
+        db.execute('INSERT OR IGNORE INTO doctors (id, name, display_order) VALUES (?, ?, ?)',
+                   (doc_id, name, order))
+    
+    # Создаём администратора, если его нет
+    hashed = bcrypt.hashpw(ADMIN_DEFAULT_PASSWORD.encode(), bcrypt.gensalt()).decode()
+    db.execute('INSERT OR IGNORE INTO users (login, password_hash, first_name) VALUES (?, ?, ?)',
+               (ADMIN_LOGIN, hashed, 'Администратор'))
     db.commit()
     db.close()
+    logger.info("Таблицы созданы/обновлены. Администратор '%s' существует.", ADMIN_LOGIN)
 
 with app.app_context():
     _ensure_tables()
-    _migrate_db()
 
 socketio = SocketIO(app, async_mode='threading')
 
@@ -114,19 +152,6 @@ def close_db(error):
     db = g.pop('db', None)
     if db is not None:
         db.close()
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({"error": "Маршрут не найден", "requested_url": request.url}), 404
-
-@app.errorhandler(403)
-def csrf_failure(e):
-    return jsonify({'error': 'CSRF token missing or incorrect'}), 403
-
-@app.errorhandler(Exception)
-def handle_exception(e):
-    traceback.print_exc()
-    return jsonify({"error": "Внутренняя ошибка сервера. Попробуйте позже."}), 500
 
 def is_admin():
     return session.get('user') == ADMIN_LOGIN
@@ -364,10 +389,14 @@ def delete_user(login):
 @app.route('/api/bookings', methods=['GET'])
 @login_required
 def get_bookings():
+    doctor = request.args.get('doctor', 'doctor1')
     db = get_db()
     now = datetime.now()
     result = []
-    rows = db.execute('SELECT * FROM bookings').fetchall() if is_admin() else db.execute('SELECT * FROM bookings WHERE login = ?', (session['user'],)).fetchall()
+    if is_admin():
+        rows = db.execute('SELECT * FROM bookings WHERE doctor = ?', (doctor,)).fetchall()
+    else:
+        rows = db.execute('SELECT * FROM bookings WHERE login = ? AND doctor = ?', (session['user'], doctor)).fetchall()
     for r in rows:
         date_str, hour = r['slot_key'].split('|')
         slot_dt = datetime.strptime(f"{date_str} {hour}:00", '%Y-%m-%d %H:%M')
@@ -377,8 +406,9 @@ def get_bookings():
 
 @app.route('/api/bookings/all', methods=['GET'])
 def get_all_bookings():
+    doctor = request.args.get('doctor', 'doctor1')
     db = get_db()
-    rows = db.execute('SELECT * FROM bookings').fetchall()
+    rows = db.execute('SELECT * FROM bookings WHERE doctor = ?', (doctor,)).fetchall()
     result = []
     for r in rows:
         date_str, hour = r['slot_key'].split('|')
@@ -391,11 +421,10 @@ def create_bookings():
     try:
         data = request.get_json()
         slots = data.get('slots', [])
+        doctor = data.get('doctor', 'doctor1')
         if not slots:
             return jsonify({'error': 'Слоты не указаны'}), 400
         target = session.get('user')
-        if not target:
-            return jsonify({'error': 'Пользователь не авторизован'}), 401
         if is_admin() and 'targetUser' in data:
             target = data['targetUser']
             db = get_db()
@@ -412,11 +441,12 @@ def create_bookings():
                 continue
             if slot_dt < now:
                 continue
-            if not db.execute('SELECT 1 FROM bookings WHERE slot_key = ?', (slot_key,)).fetchone():
-                db.execute('INSERT INTO bookings (slot_key, login) VALUES (?, ?)', (slot_key, target))
+            existing = db.execute('SELECT 1 FROM bookings WHERE slot_key = ? AND doctor = ?', (slot_key, doctor)).fetchone()
+            if not existing:
+                db.execute('INSERT INTO bookings (slot_key, login, doctor) VALUES (?, ?, ?)', (slot_key, target, doctor))
                 created += 1
         db.commit()
-        socketio.emit('booking_updated', {})
+        socketio.emit('booking_updated', {'doctor': doctor})
         return jsonify({'message': f'Забронировано {created} слотов', 'created': created})
     except Exception as e:
         traceback.print_exc()
@@ -425,29 +455,30 @@ def create_bookings():
 @app.route('/api/bookings/<date>/<int:hour>', methods=['DELETE'])
 @login_required
 def cancel_booking(date, hour):
+    doctor = request.args.get('doctor', 'doctor1')
     key = f"{date}|{hour}"
     db = get_db()
-    booking = db.execute('SELECT * FROM bookings WHERE slot_key = ?', (key,)).fetchone()
+    booking = db.execute('SELECT * FROM bookings WHERE slot_key = ? AND doctor = ?', (key, doctor)).fetchone()
     if not booking:
         return jsonify({'error': 'Бронь не найдена'}), 404
     if not is_admin() and booking['login'] != session['user']:
         return jsonify({'error': 'Нет прав на отмену'}), 403
-    db.execute('DELETE FROM comments WHERE slot_key = ?', (key,))
-    db.execute('DELETE FROM bookings WHERE slot_key = ?', (key,))
+    db.execute('DELETE FROM comments WHERE slot_key = ? AND doctor = ?', (key, doctor))
+    db.execute('DELETE FROM bookings WHERE slot_key = ? AND doctor = ?', (key, doctor))
     db.commit()
-    socketio.emit('booking_updated', {})
+    socketio.emit('booking_updated', {'doctor': doctor})
     return jsonify({'message': 'Бронь отменена'})
 
 # ---------------------- API: Административные данные встречи ----------------------
 @app.route('/api/admin/meeting/<date>/<int:hour>', methods=['GET'])
 @login_required
 def get_admin_meeting_data(date, hour):
-    """Получение административного комментария и статуса встречи. Только для админа."""
     if not is_admin():
         return jsonify({'error': 'Доступ запрещён'}), 403
+    doctor = request.args.get('doctor', 'doctor1')
     key = f"{date}|{hour}"
     db = get_db()
-    row = db.execute('SELECT admin_comment, success_meeting FROM comments WHERE slot_key = ?', (key,)).fetchone()
+    row = db.execute('SELECT admin_comment, success_meeting FROM comments WHERE slot_key = ? AND doctor = ?', (key, doctor)).fetchone()
     if row:
         return jsonify({
             'adminComment': row['admin_comment'] or '',
@@ -458,33 +489,31 @@ def get_admin_meeting_data(date, hour):
 @app.route('/api/admin/meeting/<date>/<int:hour>', methods=['PUT'])
 @login_required
 def update_admin_meeting_data(date, hour):
-    """Обновление административного комментария и статуса встречи. Только для админа."""
     if not is_admin():
         return jsonify({'error': 'Доступ запрещён'}), 403
+    doctor = request.args.get('doctor', 'doctor1')
     key = f"{date}|{hour}"
     data = request.get_json()
     admin_comment = data.get('adminComment', '')
     success_meeting = 1 if data.get('successMeeting') else 0
 
     db = get_db()
-    # Проверяем, существует ли бронирование
-    booking = db.execute('SELECT 1 FROM bookings WHERE slot_key = ?', (key,)).fetchone()
+    booking = db.execute('SELECT 1 FROM bookings WHERE slot_key = ? AND doctor = ?', (key, doctor)).fetchone()
     if not booking:
         return jsonify({'error': 'Слот не забронирован'}), 404
 
     now_str = datetime.now().strftime('%d.%m.%Y %H:%M')
     db.execute('''
-        INSERT INTO comments (slot_key, admin_comment, success_meeting, admin_edited_by, admin_edited_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(slot_key) DO UPDATE SET
+        INSERT INTO comments (slot_key, doctor, admin_comment, success_meeting, admin_edited_by, admin_edited_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(slot_key, doctor) DO UPDATE SET
             admin_comment = excluded.admin_comment,
             success_meeting = excluded.success_meeting,
             admin_edited_by = excluded.admin_edited_by,
             admin_edited_at = excluded.admin_edited_at
-    ''', (key, admin_comment, success_meeting, session['user'], now_str))
+    ''', (key, doctor, admin_comment, success_meeting, session['user'], now_str))
     db.commit()
-
-    socketio.emit('admin_meeting_updated', {'slot_key': key})
+    socketio.emit('admin_meeting_updated', {'slot_key': key, 'doctor': doctor})
     return jsonify({'message': 'Данные встречи обновлены'})
 
 # ---------------------- API: История бронирований ----------------------
@@ -494,43 +523,48 @@ def get_booking_history():
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 30, type=int)
     search = request.args.get('search', '').strip()
+    doctor = request.args.get('doctor', 'doctor1')
     if page < 1:
         page = 1
     offset = (page - 1) * limit
     db = get_db()
     if is_admin():
         query = '''
-            SELECT b.slot_key, b.login, 
+            SELECT b.slot_key, b.login, b.doctor,
                    c.text as comment_text, c.last_edited_by, c.last_edited_at,
                    c.admin_comment, c.success_meeting,
                    u.first_name, u.last_name, u.middle_name
             FROM bookings b
-            LEFT JOIN comments c ON b.slot_key = c.slot_key
+            LEFT JOIN comments c ON b.slot_key = c.slot_key AND b.doctor = c.doctor
             LEFT JOIN users u ON b.login = u.login
+            WHERE b.doctor = ?
         '''
-        params = []
+        params = [doctor]
         if search:
             search_like = f'%{search}%'
-            query += ' WHERE (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
-            params = [search_like, search_like, search_like, search_like]
-        count_sql = 'SELECT COUNT(*) as cnt FROM bookings b LEFT JOIN users u ON b.login = u.login'
+            query += ' AND (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
+            params.extend([search_like, search_like, search_like, search_like])
+        count_sql = 'SELECT COUNT(*) as cnt FROM bookings b LEFT JOIN users u ON b.login = u.login WHERE b.doctor = ?'
+        count_params = [doctor]
         if search:
-            count_sql += ' WHERE (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
-        total = db.execute(count_sql, params).fetchone()['cnt']
+            count_sql += ' AND (b.login LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ? OR u.middle_name LIKE ?)'
+            count_params.extend([search_like, search_like, search_like, search_like])
+        total = db.execute(count_sql, count_params).fetchone()['cnt']
         query += ' ORDER BY substr(b.slot_key, 1, 10) DESC, CAST(substr(b.slot_key, 12) AS INTEGER) DESC LIMIT ? OFFSET ?'
         params.extend([limit, offset])
         rows = db.execute(query, params).fetchall()
     else:
         user = session['user']
         rows = db.execute('''
-            SELECT b.slot_key, b.login, c.text as comment_text, c.last_edited_by, c.last_edited_at
+            SELECT b.slot_key, b.login, b.doctor,
+                   c.text as comment_text, c.last_edited_by, c.last_edited_at
             FROM bookings b
-            LEFT JOIN comments c ON b.slot_key = c.slot_key
-            WHERE b.login = ?
+            LEFT JOIN comments c ON b.slot_key = c.slot_key AND b.doctor = c.doctor
+            WHERE b.login = ? AND b.doctor = ?
             ORDER BY substr(b.slot_key, 1, 10) DESC, CAST(substr(b.slot_key, 12) AS INTEGER) DESC
             LIMIT ? OFFSET ?
-        ''', (user, limit, offset)).fetchall()
-        total = db.execute('SELECT COUNT(*) as cnt FROM bookings WHERE login = ?', (user,)).fetchone()['cnt']
+        ''', (user, doctor, limit, offset)).fetchall()
+        total = db.execute('SELECT COUNT(*) as cnt FROM bookings WHERE login = ? AND doctor = ?', (user, doctor)).fetchone()['cnt']
     bookings = []
     now = datetime.now()
     for row in rows:
@@ -550,6 +584,7 @@ def get_booking_history():
             'date': date_str,
             'hour': hour,
             'login': row['login'],
+            'doctor': row['doctor'],
             'comment': comment_text,
             'lastEditedBy': row['last_edited_by'],
             'lastEditedAt': row['last_edited_at'],
@@ -564,9 +599,10 @@ def get_booking_history():
 # ---------------------- API: Комментарии ----------------------
 @app.route('/api/comments/<date>/<int:hour>', methods=['GET'])
 def get_comment(date, hour):
+    doctor = request.args.get('doctor', 'doctor1')
     key = f"{date}|{hour}"
     db = get_db()
-    row = db.execute('SELECT * FROM comments WHERE slot_key = ?', (key,)).fetchone()
+    row = db.execute('SELECT * FROM comments WHERE slot_key = ? AND doctor = ?', (key, doctor)).fetchone()
     if row:
         return jsonify({'text': row['text'], 'lastEditedBy': row['last_edited_by'], 'lastEditedAt': row['last_edited_at']})
     return jsonify({'text': '', 'lastEditedBy': None, 'lastEditedAt': None})
@@ -574,9 +610,10 @@ def get_comment(date, hour):
 @app.route('/api/comments/<date>/<int:hour>', methods=['PUT'])
 @login_required
 def update_comment(date, hour):
+    doctor = request.args.get('doctor', 'doctor1')
     key = f"{date}|{hour}"
     db = get_db()
-    booking = db.execute('SELECT * FROM bookings WHERE slot_key = ?', (key,)).fetchone()
+    booking = db.execute('SELECT * FROM bookings WHERE slot_key = ? AND doctor = ?', (key, doctor)).fetchone()
     if not booking:
         return jsonify({'error': 'Слот не забронирован'}), 404
     if not is_admin() and booking['login'] != session['user']:
@@ -588,11 +625,19 @@ def update_comment(date, hour):
     data = request.get_json()
     text = data.get('text', '')
     now_str = datetime.now().strftime('%d.%m.%Y %H:%M')
-    db.execute('INSERT OR REPLACE INTO comments (slot_key, text, last_edited_by, last_edited_at) VALUES (?,?,?,?)',
-               (key, text, session['user'], now_str))
+    db.execute('''INSERT OR REPLACE INTO comments (slot_key, doctor, text, last_edited_by, last_edited_at)
+                  VALUES (?, ?, ?, ?, ?)''',
+               (key, doctor, text, session['user'], now_str))
     db.commit()
-    socketio.emit('comment_updated', {'slot_key': key})
+    socketio.emit('comment_updated', {'slot_key': key, 'doctor': doctor})
     return jsonify({'message': 'Комментарий сохранён'})
+
+# ---------------------- API: Список врачей ----------------------
+@app.route('/api/doctors', methods=['GET'])
+def get_doctors():
+    db = get_db()
+    rows = db.execute('SELECT id, name FROM doctors ORDER BY display_order').fetchall()
+    return jsonify([{'id': row['id'], 'name': row['name']} for row in rows])
 
 # ---------------------- Главная страница ----------------------
 @app.route('/')

@@ -1,5 +1,4 @@
 // ===================== Редактирование комментариев (основная страница) =====================
-
 let _mainEditingData = null;
 let _isClosing = false;
 
@@ -88,10 +87,7 @@ async function enterEditMode(key, commentText) {
         }
 
         try {
-            const result = await apiFetch(`/api/comments/${date}/${hour}`, {
-                method: 'PUT',
-                body: JSON.stringify({ text: newText })
-            });
+            const result = await updateComment(date, hour, newText);
             showToast(result.message || 'Комментарий сохранён');
 
             const commentData = await loadComment(key);
@@ -193,22 +189,15 @@ function removeOutsideClickHandler() {
     }
 }
 
-// Переопределяем старые функции для совместимости
-const originalExitEditMode = window.exitEditMode || function() {};
-const originalSaveComment = window.saveComment || function() {};
-
 window.exitEditMode = function(key) {
     if (_mainEditingData && _mainEditingData.key === key) {
         _mainEditingData.cancelEdit();
-    } else {
-        originalExitEditMode(key);
     }
 };
-
 window.saveComment = async function(key, text) {
     const [date, hour] = key.split('|');
     try {
-        const data = await apiFetch(`/api/comments/${date}/${hour}`, { method: 'PUT', body: JSON.stringify({ text }) });
+        const data = await updateComment(date, hour, text);
         showToast(data.message || 'Комментарий сохранён');
         if (typeof renderBookingsList === 'function') {
             await renderBookingsList();
@@ -219,7 +208,6 @@ window.saveComment = async function(key, text) {
         throw e;
     }
 };
-
 window.forceCloseEditing = function() {
     if (_mainEditingData) {
         _mainEditingData.cancelEdit();
@@ -228,6 +216,5 @@ window.forceCloseEditing = function() {
     removeOutsideClickHandler();
     editingCommentKey = null;
 };
-
 window.enterEditMode = enterEditMode;
 window.commentClickHandler = commentClickHandler;

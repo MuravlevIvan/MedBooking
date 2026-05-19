@@ -1,18 +1,31 @@
 // ===================== Список бронирований =====================
+// Глобальный флаг для предотвращения параллельных вызовов
+let isRenderingBookings = false;
 
 async function renderBookingsList() {
+  // Защита от параллельных вызовов
+  if (isRenderingBookings) {
+    console.log('renderBookingsList уже выполняется, пропускаем');
+    return;
+  }
+  
   const container = document.getElementById('bookingsListContainer');
   const titleSpan = document.getElementById('bookingsTitle');
   if (!container) return;
+  
   if (!currentUser) {
     titleSpan.innerHTML = 'Бронирования';
     container.innerHTML = '<div class="empty-bookings">🔒 Авторизуйтесь</div>';
     bookingElementsCache.clear();
     return;
   }
+  
+  isRenderingBookings = true;
+  
   try {
-    const rawBookings = await apiFetch('/api/bookings', { method: 'GET' });
+    const rawBookings = await apiFetch(`/api/bookings?doctor=${currentDoctor}`);
     let bookings = rawBookings;
+    
     if (isAdminUser && bookingFilterTerm.trim()) {
       const search = bookingFilterTerm.trim().toLowerCase();
       bookings = bookings.filter(b => {
@@ -20,63 +33,47 @@ async function renderBookingsList() {
         return b.login.toLowerCase().includes(search) || fullName.includes(search);
       });
     }
+    
     titleSpan.innerHTML = isAdminUser ? 'Все бронирования' : 'Мои бронирования';
+    
+    // ✅ ПОЛНОСТЬЮ ОЧИЩАЕМ КОНТЕЙНЕР И КЭШ
+    container.innerHTML = '';
+    bookingElementsCache.clear();
+    
     if (bookings.length === 0) {
       container.innerHTML = '<div class="empty-bookings">✨ Нет броней</div>';
-      bookingElementsCache.clear();
+      isRenderingBookings = false;
       return;
     }
-
-    bookings.sort((a,b) => a.date.localeCompare(b.date) || a.hour - b.hour);
-
-    if (bookingElementsCache.size === 0 || container.children.length === 0) {
-      container.innerHTML = '';
-      bookingElementsCache.clear();
-      for (const slot of bookings) {
-        let commentData = { text: '' };
-        try { commentData = await loadComment(slot.key); } catch(e) {}
-        const item = createBookingItem(slot, commentData.text || '');
-        container.appendChild(item);
-        bookingElementsCache.set(slot.key, item);
-        if (commentData.lastEditedBy) {
-          const editInfo = item.querySelector('.edit-info');
-          if (editInfo) editInfo.textContent = `✏️ ${commentData.lastEditedBy}, ${commentData.lastEditedAt}`;
-        }
-      }
-    } else {
-      const visibleKeys = new Set(bookings.map(b => b.key));
-      for (const [key, item] of bookingElementsCache) {
-        if (!visibleKeys.has(key)) {
-          item.remove();
-          bookingElementsCache.delete(key);
-        }
-      }
-      const sortedKeys = bookings.map(b => b.key);
-      for (let i = 0; i < sortedKeys.length; i++) {
-        const key = sortedKeys[i];
-        let item = bookingElementsCache.get(key);
-        if (!item) {
-          const slot = bookings.find(b => b.key === key);
-          if (slot) {
-            let commentData = { text: '' };
-            try { commentData = await loadComment(slot.key); } catch(e) {}
-            item = createBookingItem(slot, commentData.text || '');
-            container.insertBefore(item, container.children[i] || null);
-            bookingElementsCache.set(key, item);
-          }
-          continue;
-        }
-        item.style.display = '';
-        const currentIndex = Array.from(container.children).indexOf(item);
-        if (currentIndex !== i) {
-          container.insertBefore(item, container.children[i] || null);
+    
+    bookings.sort((a, b) => a.date.localeCompare(b.date) || a.hour - b.hour);
+    
+    // Создаём элементы заново
+    for (const slot of bookings) {
+      let commentData = { text: '' };
+      try {
+        commentData = await loadComment(slot.key);
+      } catch(e) {}
+      
+      const item = createBookingItem(slot, commentData.text || '');
+      container.appendChild(item);
+      bookingElementsCache.set(slot.key, item);
+      
+      if (commentData.lastEditedBy) {
+        const editInfo = item.querySelector('.edit-info');
+        if (editInfo) {
+          editInfo.textContent = `✏️ ${commentData.lastEditedBy}, ${commentData.lastEditedAt}`;
         }
       }
     }
   } catch (e) {
+    console.error(e);
     container.innerHTML = '<div class="empty-bookings">❌ Ошибка загрузки</div>';
     bookingElementsCache.clear();
+  } finally {
+    isRenderingBookings = false;
   }
+  
   updateHighlightedBooking();
 }
 
@@ -110,7 +107,8 @@ function createBookingItem(slot, commentText = null) {
   const timeStr = `${String(slot.hour).padStart(2,'0')}:00 - ${String(slot.hour+1).padStart(2,'0')}:00`;
   const key = slot.key, owner = slot.login;
   
-  const slotTime = new Date(slot.date); slotTime.setHours(slot.hour, 0, 0, 0);
+  const slotTime = new Date(slot.date);
+  slotTime.setHours(slot.hour, 0, 0, 0);
   const isPastSlot = slotTime < new Date();
   const canEdit = isAdminUser || (owner === currentUser && !isPastSlot);
 
@@ -135,12 +133,16 @@ function createBookingItem(slot, commentText = null) {
       <span class="edit-info"></span>
     </div>`;
 
-  // Обработчик кнопки отмены
-  item.querySelector('.cancel-booking-btn')?.addEventListener('click', () => {
-    if (confirm('Отменить бронь?')) cancelBooking(slot.date, slot.hour);
-  });
+  // Кнопка отмены
+  const cancelBtn = item.querySelector('.cancel-booking-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (confirm('Отменить бронь?')) cancelBooking(slot.date, slot.hour);
+    });
+  }
 
-  // Обработчик клика по комментарию
+  // Клик по комментарию
   const commentDiv = item.querySelector('.booking-comment');
   if (commentDiv) {
     commentDiv.addEventListener('click', (e) => {
@@ -152,25 +154,25 @@ function createBookingItem(slot, commentText = null) {
         renderMainContent();
         const curText = commentDiv.textContent.trim() === '✏️ Кликните, чтобы добавить комментарий' ? '' : commentDiv.textContent.trim();
         enterEditMode(key, curText);
-      } else showToast('Вы не можете редактировать этот комментарий');
+      } else {
+        showToast('Вы не можете редактировать этот комментарий');
+      }
     });
   }
 
-  // Для админа: обработчик клика по имени пользователя (открывает историю с фильтром)
+  // Для админа: клик по имени пользователя
   if (isAdminUser) {
     const userDiv = item.querySelector('.booking-user');
     if (userDiv) {
       userDiv.addEventListener('click', (e) => {
         e.stopPropagation();
         const login = userDiv.getAttribute('data-login');
-        if (login) {
-          showHistoryModal(login);
-        }
+        if (login) showHistoryModal(login);
       });
     }
   }
 
-  // Обработчик клика по всей записи (выделение слота) для владельца/админа
+  // Выделение всей записи
   if (isAdminUser || owner === currentUser) {
     item.addEventListener('click', (e) => {
       if (e.target.closest('button, .booking-comment, .comment-edit-area, textarea, .booking-user')) return;

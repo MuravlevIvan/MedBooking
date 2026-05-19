@@ -28,18 +28,36 @@ async function apiFetch(url, options = {}) {
   }
 }
 
-// ===================== Инициализация =====================
+// Загрузка списка врачей
+async function loadDoctors() {
+  try {
+    doctorsList = await apiFetch('/api/doctors');
+    if (!doctorsList.length) doctorsList = [{id:'doctor1',name:'Врач 1'},{id:'doctor2',name:'Врач 2'},{id:'doctor3',name:'Врач 3'}];
+  } catch(e) {
+    doctorsList = [{id:'doctor1',name:'Врач 1'},{id:'doctor2',name:'Врач 2'},{id:'doctor3',name:'Врач 3'}];
+  }
+}
+
+// Загрузка бронирований для конкретного врача
+async function loadBookingsForDoctor(doctor) {
+  const bookingsData = await apiFetch(`/api/bookings/all?doctor=${doctor}`);
+  allBookings = {};
+  bookingsData.forEach(b => { allBookings[b.key] = b.login; });
+  bookingElementsCache.clear();
+  renderMainContent();
+  renderBookingsList();
+  updateInfoPanel();
+}
+
 async function loadInitialData() {
   highlightedBookingKey = null;
+  await loadDoctors();
   const me = await apiFetch('/api/me').catch(() => ({ login: null, is_admin: false }));
   currentUser = me.login;
   isAdminUser = me.is_admin;
   if (isAdminUser && !adminBookingTarget) adminBookingTarget = currentUser;
 
-  const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
-  allBookings = {};
-  bookingsData.forEach(b => { allBookings[b.key] = b.login; });
-  bookingElementsCache.clear();
+  await loadBookingsForDoctor(currentDoctor);
 
   if (isAdminUser) {
     const usersData = await apiFetch('/api/users', { method: 'GET' });
@@ -70,7 +88,6 @@ async function loadInitialData() {
   renderFullApp();
 }
 
-// ===================== Авторизация =====================
 async function loginUser(login, password) {
   try {
     const data = await apiFetch('/api/login', { method: 'POST', body: JSON.stringify({ login, password }) });
@@ -116,7 +133,6 @@ async function logoutUser() {
   renderFullApp();
 }
 
-// ===================== Бронирования =====================
 function isSlotFree(dateStr, hour, dateObj) {
   const key = `${dateStr}|${hour}`;
   if (allBookings[key]) return false;
@@ -151,8 +167,10 @@ async function bookSelectedSlots() {
   if (selectedSlots.size === 0) { showToast('Ничего не выбрано'); return; }
 
   const slots = Array.from(selectedSlots);
-  const body = { slots };
-  if (isAdminUser && adminBookingTarget && adminBookingTarget !== currentUser) body.targetUser = adminBookingTarget;
+  const body = { slots, doctor: currentDoctor };
+  if (isAdminUser && adminBookingTarget && adminBookingTarget !== currentUser) {
+    body.targetUser = adminBookingTarget;
+  }
 
   selectedSlots.clear();
   highlightedBookingKey = null;
@@ -160,7 +178,7 @@ async function bookSelectedSlots() {
   updateInfoPanel();
 
   try {
-    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+    const bookingsData = await apiFetch(`/api/bookings/all?doctor=${currentDoctor}`);
     allBookings = {};
     bookingsData.forEach(b => { allBookings[b.key] = b.login; });
     const hasConflict = slots.some(slotKey => !!allBookings[slotKey]);
@@ -177,47 +195,16 @@ async function bookSelectedSlots() {
     const data = await apiFetch('/api/bookings', { method: 'POST', body: JSON.stringify(body) });
     showToast(data.message);
 
-    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
-    allBookings = {};
-    bookingsData.forEach(b => { allBookings[b.key] = b.login; });
-
-    const container = document.getElementById('bookingsListContainer');
-    if (container && container.querySelector('.empty-bookings')) {
-      container.innerHTML = ''; bookingElementsCache.clear();
-    }
-
-    const targetUser = body.targetUser || currentUser;
-    for (const slotKey of slots) {
-      if (allBookings[slotKey] === targetUser) {
-        if (bookingElementsCache.has(slotKey)) continue;
-        const [dateStr, hourStr] = slotKey.split('|');
-        const newSlot = { date: dateStr, hour: parseInt(hourStr), login: targetUser, key: slotKey };
-        const newItem = createBookingItem(newSlot, '');
-        if (container) {
-          const allItems = [...container.children].filter(el => el.getAttribute('data-key'));
-          let inserted = false;
-          for (const existingItem of allItems) {
-            const existingKey = existingItem.getAttribute('data-key');
-            const [existingDate, existingHour] = existingKey.split('|');
-            if (existingDate > dateStr || (existingDate === dateStr && parseInt(existingHour) > newSlot.hour)) {
-              container.insertBefore(newItem, existingItem);
-              inserted = true; break;
-            }
-          }
-          if (!inserted) container.appendChild(newItem);
-          bookingElementsCache.set(slotKey, newItem);
-        }
-      }
-    }
+    // Перезагружаем все данные для текущего врача
+    await loadBookingsForDoctor(currentDoctor);
 
     if (data.created === 0) showToast('Слоты уже заняты другим пользователем');
-    renderMainContent();
     updateInfoPanel();
     updateHighlightedBooking();
   } catch (e) {
     showToast('Не удалось забронировать. Возможно, слот уже занят.');
     try {
-      const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+      const bookingsData = await apiFetch(`/api/bookings/all?doctor=${currentDoctor}`);
       allBookings = {};
       bookingsData.forEach(b => { allBookings[b.key] = b.login; });
     } catch (ignored) {}
@@ -229,35 +216,28 @@ async function bookSelectedSlots() {
 
 async function cancelBooking(dateStr, hour) {
   try {
-    await apiFetch(`/api/bookings/${dateStr}/${hour}`, { method: 'DELETE' });
+    await apiFetch(`/api/bookings/${dateStr}/${hour}?doctor=${currentDoctor}`, { method: 'DELETE' });
     showToast('Бронь отменена');
     selectedSlots.delete(`${dateStr}|${hour}`);
     const key = `${dateStr}|${hour}`;
     if (highlightedBookingKey === key) highlightedBookingKey = null;
-
-    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
-    allBookings = {};
-    bookingsData.forEach(b => { allBookings[b.key] = b.login; });
-
-    const bookingElement = document.getElementById(`booking-${key}`);
-    if (bookingElement) { bookingElement.remove(); bookingElementsCache.delete(key); }
-
-    const container = document.getElementById('bookingsListContainer');
-    if (container && container.querySelectorAll('.booking-item[data-key]').length === 0) {
-      container.innerHTML = '<div class="empty-bookings">✨ Нет броней</div>';
-      bookingElementsCache.clear();
-    }
-    renderMainContent(); updateInfoPanel(); updateHighlightedBooking();
+    await loadBookingsForDoctor(currentDoctor);
   } catch (e) {}
 }
 
 async function loadComment(key) {
   const [date, hour] = key.split('|');
-  try { return await apiFetch(`/api/comments/${date}/${hour}`, { method: 'GET' }); }
+  try { return await apiFetch(`/api/comments/${date}/${hour}?doctor=${currentDoctor}`); }
   catch(e) { return { text: '', lastEditedBy: null, lastEditedAt: null }; }
 }
 
-// ===================== Админские утилиты =====================
+async function updateComment(date, hour, text) {
+  return apiFetch(`/api/comments/${date}/${hour}?doctor=${currentDoctor}`, {
+    method: 'PUT',
+    body: JSON.stringify({ text })
+  });
+}
+
 async function fetchUsersList() {
   if (!isAdminUser) return;
   const usersData = await apiFetch('/api/users', { method: 'GET' });
@@ -280,9 +260,8 @@ async function fetchPendingList() {
   return pendingUsers;
 }
 
-// ===================== История бронирований =====================
 async function fetchBookingHistory(page = 1, search = '') {
-  const params = new URLSearchParams({ page, limit: 30 });
+  const params = new URLSearchParams({ page, limit: 30, doctor: currentDoctor });
   if (search) params.append('search', search);
   return apiFetch(`/api/bookings/history?${params.toString()}`, { method: 'GET' });
 }

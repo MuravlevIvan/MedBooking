@@ -1,43 +1,23 @@
 // ===================== Глобальное состояние приложения =====================
-// Все переменные, используемые несколькими модулями, объявлены здесь.
-// Этот файл должен загружаться ДО всех остальных скриптов (кроме config.js).
-
-// Пользователь
-let currentUser = null;               // логин текущего пользователя (null – гость)
-let isAdminUser = false;              // является ли текущий пользователь администратором
-
-// Списки пользователей (актуальны для админа)
-let allUsers = [];                    // массив логинов всех подтверждённых пользователей
-let pendingUsers = [];                // массив объектов ожидающих подтверждения
-
-// Бронирования
-let allBookings = {};                 // { "YYYY-MM-DD|HH": "login" }
-let bookingComments = {};             // кэш комментариев (опционально, сейчас не используется)
-
-// Профили и статистика
-let userProfiles = {};                // { login: { firstName, lastName, ... } }
-let userBookingCounts = {};           // { login: количество активных броней }
-
-// Выделение слотов для бронирования и подсветка
-let selectedSlots = new Set();        // ключи слотов, выбранных для бронирования
-let highlightedBookingKey = null;     // ключ записи, подсвеченной в списке броней
-
-// Навигация по дням
-let currentFocusDate = new Date();    // дата, от которой строится текущая сетка дней
-
-// Редактирование комментариев
-let editingCommentKey = null;         // ключ записи, комментарий которой редактируется в данный момент
-let outsideClickHandler = null;       // функция-обработчик клика вне области редактирования
-let originalCommentText = '';         // текст комментария до начала редактирования
-
-// Администратор: выбор пользователя для бронирования
-let adminBookingTarget = null;        // логин пользователя, на которого администратор создаёт бронь
-
-// Фильтрация списка бронирований
-let bookingFilterTerm = '';           // строка поиска в списке броней
-
-// Вспомогательный поиск (например, в модальном окне выбора пользователя)
+let currentUser = null;
+let isAdminUser = false;
+let allUsers = [];
+let pendingUsers = [];
+let allBookings = {};                 // для текущего врача
+let bookingComments = {};
+let userProfiles = {};
+let userBookingCounts = {};
+let selectedSlots = new Set();
+let highlightedBookingKey = null;
+let currentFocusDate = new Date();
+let editingCommentKey = null;
+let outsideClickHandler = null;
+let originalCommentText = '';
+let adminBookingTarget = null;
+let bookingFilterTerm = '';
 let userSelectSearchTerm = '';
+let bookingElementsCache = new Map();
 
-// Кэш DOM‑элементов для точечных обновлений списка бронирований
-let bookingElementsCache = new Map(); // ключ -> HTMLElement
+// НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ ВРАЧЕЙ
+let currentDoctor = 'doctor1';        // id текущего выбранного врача
+let doctorsList = [];                 // массив {id, name}

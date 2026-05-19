@@ -224,7 +224,7 @@ let _historyOutsideHandler = null;
 async function fetchAdminMeetingData(date, hour) {
     if (!isAdminUser) return null;
     try {
-        return await apiFetch(`/api/admin/meeting/${date}/${hour}`, { method: 'GET' });
+        return await apiFetch(`/api/admin/meeting/${date}/${hour}?doctor=${currentDoctor}`);
     } catch(e) {
         console.warn(e);
         return { adminComment: '', successMeeting: false };
@@ -238,7 +238,7 @@ async function updateAdminMeetingData(date, hour, adminComment, successMeeting) 
     if (adminComment !== null) body.adminComment = adminComment;
     if (successMeeting !== null) body.successMeeting = successMeeting;
     try {
-        await apiFetch(`/api/admin/meeting/${date}/${hour}`, {
+        await apiFetch(`/api/admin/meeting/${date}/${hour}?doctor=${currentDoctor}`, {
             method: 'PUT',
             body: JSON.stringify(body)
         });
@@ -336,10 +336,12 @@ function renderHistoryContent(data) {
     `;
   }
 
+  // Добавляем колонку "Врач"
   const tableHeader = `
     <table class="history-table">
       <thead>
         <tr><th>Дата и время</th>${isAdminUser ? '<th>Пользователь</th>' : ''}
+          <th>Врач</th>
           ${isAdminUser ? '<th>Успешно</th>' : ''}
           <th>Комментарий пользователя</th>${isAdminUser ? '<th>Комментарий администратора</th>' : ''}
         </tr>
@@ -362,11 +364,16 @@ function renderHistoryContent(data) {
     const commentText = booking.comment || '';
     const canEditComment = isAdminUser || (!booking.isPast && booking.login === currentUser);
     const editInfo = booking.lastEditedBy ? `✏️ ${escapeHtml(booking.lastEditedBy)}, ${escapeHtml(booking.lastEditedAt)}` : '';
+    // Получаем название врача
+    const doctorName = doctorsList.find(d => d.id === booking.doctor)?.name || booking.doctor;
 
     const row = document.createElement('tr');
     row.innerHTML = `<td data-label="Дата">${dateStr}, ${timeStr}</td>`;
     if (isAdminUser) {
       row.innerHTML += `<td data-label="Пользователь">${escapeHtml(booking.displayName || booking.login)}</td>`;
+    }
+    row.innerHTML += `<td data-label="Врач">${escapeHtml(doctorName)}</td>`;
+    if (isAdminUser) {
       const successChecked = booking.successMeeting ? 'checked' : '';
       row.innerHTML += `
         <td data-label="Успешно" style="text-align: center;">
@@ -600,10 +607,7 @@ async function historyCommentClickHandler(e) {
     }
 
     try {
-      const result = await apiFetch(`/api/comments/${date}/${hour}`, {
-        method: 'PUT',
-        body: JSON.stringify({ text: newText })
-      });
+      const result = await updateComment(date, hour, newText);
       showToast(result.message || 'Комментарий сохранён');
 
       const commentData = await loadComment(key);

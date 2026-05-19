@@ -1,7 +1,14 @@
 // ===================== Сборка интерфейса и глобальные обработчики =====================
-
 function renderFullApp() {
   const appContainer = document.getElementById('appContainer');
+  
+  // Генерация вкладок врачей
+  const doctorsHtml = doctorsList.map(doc => `
+    <button class="doctor-tab ${currentDoctor === doc.id ? 'active' : ''}" data-doctor="${doc.id}">
+      ${escapeHtml(doc.name)}
+    </button>
+  `).join('');
+
   appContainer.innerHTML = `
     <div class="main-card">
       <div class="app-header">
@@ -14,6 +21,9 @@ function renderFullApp() {
           ${currentUser ? `<button class="history-btn" id="historyBtn">📜 История</button>` : ''}
           ${currentUser ? `<button class="logout-btn" id="logoutBtn">🚪 Выйти</button>` : `<button class="auth-action-btn" id="authBtn">🔐 Авторизоваться</button>`}
         </div>
+      </div>
+      <div class="doctor-tabs">
+        ${doctorsHtml}
       </div>
       <div class="dashboard">
         <div class="calendar-section">
@@ -64,6 +74,7 @@ function renderFullApp() {
       </div>
     </div>`;
 
+  // Обработчики навигации по дням
   document.getElementById('prevDay')?.addEventListener('click', () => {
     let newDate = new Date(currentFocusDate);
     newDate.setDate(currentFocusDate.getDate() - 1);
@@ -76,14 +87,12 @@ function renderFullApp() {
     updateHighlightedBooking();
     renderMainContent();
   });
-
   document.getElementById('nextDay')?.addEventListener('click', () => {
     currentFocusDate.setDate(currentFocusDate.getDate() + 1);
     highlightedBookingKey = null;
     updateHighlightedBooking();
     renderMainContent();
   });
-
   document.getElementById('bookBtn')?.addEventListener('click', bookSelectedSlots);
   document.getElementById('clearSelBtn')?.addEventListener('click', () => {
     selectedSlots.clear();
@@ -93,7 +102,6 @@ function renderFullApp() {
     updateInfoPanel();
     showToast('Выбор очищен');
   });
-
   if (currentUser) {
     document.getElementById('logoutBtn')?.addEventListener('click', logoutUser);
     document.getElementById('profileBtn')?.addEventListener('click', () => {
@@ -102,11 +110,9 @@ function renderFullApp() {
   } else {
     document.getElementById('authBtn')?.addEventListener('click', showAuthModal);
   }
-
   if (isAdminUser) {
     document.getElementById('usersManageBtn')?.addEventListener('click', showUsersManagementModal);
     document.getElementById('selectUserBtn')?.addEventListener('click', showUserSelectModal);
-
     document.getElementById('applyFilterBtn')?.addEventListener('click', () => {
       bookingFilterTerm = document.getElementById('bookingFilterInput')?.value || '';
       highlightedBookingKey = null;
@@ -133,8 +139,25 @@ function renderFullApp() {
       }
     });
   }
-
   document.getElementById('historyBtn')?.addEventListener('click', () => showHistoryModal());
+
+  // Обработчики вкладок врачей
+  document.querySelectorAll('.doctor-tab').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const doctorId = btn.dataset.doctor;
+      if (doctorId === currentDoctor) return;
+      currentDoctor = doctorId;
+      selectedSlots.clear();
+      highlightedBookingKey = null;
+      editingCommentKey = null;
+      await loadBookingsForDoctor(currentDoctor);
+      document.querySelectorAll('.doctor-tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      updateInfoPanel();
+      renderMainContent();
+      renderBookingsList();
+    });
+  });
 
   document.addEventListener('click', function(e) {
     if (e.target.closest('button, a, input, textarea, .modal-overlay, .toast-msg')) return;

@@ -5,25 +5,22 @@ socket.on('connect', () => {
     console.log('WebSocket подключён');
 });
 
-// Обновление бронирований (реакция на создание / отмену)
-socket.on('booking_updated', async () => {
-    // Загружаем актуальные данные о бронированиях
-    const bookingsData = await apiFetch('/api/bookings/all', { method: 'GET' });
+socket.on('booking_updated', async (data) => {
+    if (data && data.doctor && data.doctor !== currentDoctor) return;
+    // Обновляем данные бронирований для текущего врача
+    const bookingsData = await apiFetch(`/api/bookings/all?doctor=${currentDoctor}`);
     allBookings = {};
     bookingsData.forEach(b => { allBookings[b.key] = b.login; });
-
-    // Перерисовываем календарь (слот станет серым, если занят)
+    // Перерисовываем календарь и список
     renderMainContent();
-
-    // Обновляем список броней и панель, но НЕ трогаем selectedSlots
     if (currentUser) {
-        renderBookingsList();
+        // Полностью перерисовываем список (очистка происходит внутри renderBookingsList)
+        await renderBookingsList();
         updateInfoPanel();
         updateHighlightedBooking();
     }
 });
 
-// Обновление списка пользователей (когда админ подтверждает/создаёт/удаляет)
 socket.on('user_updated', async () => {
     if (!isAdminUser) return;
     const usersData = await apiFetch('/api/users', { method: 'GET' });
@@ -46,9 +43,9 @@ socket.on('user_updated', async () => {
     }
 });
 
-// Обновление текста комментария при изменении другим пользователем
 socket.on('comment_updated', (data) => {
     if (!currentUser) return;
+    if (data && data.doctor && data.doctor !== currentDoctor) return;
     const key = data.slot_key;
     const item = bookingElementsCache.get(key) || document.getElementById(`booking-${key}`);
     if (item) {
