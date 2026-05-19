@@ -179,7 +179,7 @@ body {
     border-radius: 0.8rem;
     font-size: 0.8rem;
     resize: vertical;
-    min-height: 60px;
+    min-height: 130px;
 }
 .comment-buttons { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
 .comment-save-btn { background: #3b82f6; color: white; border: none; border-radius: 1rem; padding: 0.3rem 0.8rem; font-size: 0.7rem; cursor: pointer; font-weight: 600; }
@@ -657,6 +657,21 @@ body {
 .close-btn { background: #e2e8f0; color: #334155; }
 
 /* ── Администратор ── */
+/* ===== Дополнительные стили для админ-комментариев и чекбокса в истории ===== */
+.history-comment.admin-comment {
+    background: #f0fdf4;
+    border-left: 2px solid #22c55e;
+}
+.history-comment.admin-comment:hover {
+    background: #dcfce7;
+}
+.success-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    transform: scale(1.2);
+}
+
 .admin-user-selector {
     display: flex; justify-content: flex-start; align-items: center;
     margin-bottom: 0.8rem; gap: 1rem; flex-wrap: wrap;
@@ -670,7 +685,30 @@ body {
     background: #8b5cf6; border: none; padding: 0.3rem 1rem;
     border-radius: 2rem; font-weight: 600; color: white; cursor: pointer;
 }
+/* Для обычного пользователя (не админа) – ширина первой колонки (дата) 1% */
+.history-table th:first-child,
+.history-table td:first-child {
+    width: 1%;
+    white-space: nowrap;
+}
 
+.history-table th:nth-child(1),
+.history-table td:nth-child(1) {
+    width: 10%;
+}
+
+.history-table th:nth-child(3),
+.history-table td:nth-child(3) {
+    width: 5%;
+}
+.history-table th:nth-child(4),
+.history-table td:nth-child(4) {
+    width: 30%;
+}
+.history-table th:nth-child(5),
+.history-table td:nth-child(5) {
+    width: 30%;
+}
 /* ── Подсветка ── */
 .booking-item.highlighted {
     box-shadow: 0 0 0 3px #8b5cf6;

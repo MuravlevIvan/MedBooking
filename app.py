@@ -79,8 +79,26 @@ def _ensure_tables():
     db.commit()
     db.close()
 
+def _migrate_db():
+    """Добавляет колонки admin_comment, success_meeting и поля редактирования в таблицу comments."""
+    db = sqlite3.connect(DATABASE)
+    cursor = db.cursor()
+    cursor.execute("PRAGMA table_info(comments)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if 'admin_comment' not in columns:
+        cursor.execute("ALTER TABLE comments ADD COLUMN admin_comment TEXT DEFAULT ''")
+    if 'success_meeting' not in columns:
+        cursor.execute("ALTER TABLE comments ADD COLUMN success_meeting BOOLEAN DEFAULT 0")
+    if 'admin_edited_by' not in columns:
+        cursor.execute("ALTER TABLE comments ADD COLUMN admin_edited_by TEXT")
+    if 'admin_edited_at' not in columns:
+        cursor.execute("ALTER TABLE comments ADD COLUMN admin_edited_at TEXT")
+    db.commit()
+    db.close()
+
 with app.app_context():
     _ensure_tables()
+    _migrate_db()
 
 socketio = SocketIO(app, async_mode='threading')
 
@@ -353,7 +371,6 @@ def get_bookings():
     for r in rows:
         date_str, hour = r['slot_key'].split('|')
         slot_dt = datetime.strptime(f"{date_str} {hour}:00", '%Y-%m-%d %H:%M')
-        # Показываем только будущие брони (для всех)
         if slot_dt >= now:
             result.append({'date': date_str, 'hour': int(hour), 'login': r['login'], 'key': r['slot_key']})
     return jsonify(result)
@@ -421,6 +438,55 @@ def cancel_booking(date, hour):
     socketio.emit('booking_updated', {})
     return jsonify({'message': 'Бронь отменена'})
 
+# ---------------------- API: Административные данные встречи ----------------------
+@app.route('/api/admin/meeting/<date>/<int:hour>', methods=['GET'])
+@login_required
+def get_admin_meeting_data(date, hour):
+    """Получение административного комментария и статуса встречи. Только для админа."""
+    if not is_admin():
+        return jsonify({'error': 'Доступ запрещён'}), 403
+    key = f"{date}|{hour}"
+    db = get_db()
+    row = db.execute('SELECT admin_comment, success_meeting FROM comments WHERE slot_key = ?', (key,)).fetchone()
+    if row:
+        return jsonify({
+            'adminComment': row['admin_comment'] or '',
+            'successMeeting': bool(row['success_meeting'])
+        })
+    return jsonify({'adminComment': '', 'successMeeting': False})
+
+@app.route('/api/admin/meeting/<date>/<int:hour>', methods=['PUT'])
+@login_required
+def update_admin_meeting_data(date, hour):
+    """Обновление административного комментария и статуса встречи. Только для админа."""
+    if not is_admin():
+        return jsonify({'error': 'Доступ запрещён'}), 403
+    key = f"{date}|{hour}"
+    data = request.get_json()
+    admin_comment = data.get('adminComment', '')
+    success_meeting = 1 if data.get('successMeeting') else 0
+
+    db = get_db()
+    # Проверяем, существует ли бронирование
+    booking = db.execute('SELECT 1 FROM bookings WHERE slot_key = ?', (key,)).fetchone()
+    if not booking:
+        return jsonify({'error': 'Слот не забронирован'}), 404
+
+    now_str = datetime.now().strftime('%d.%m.%Y %H:%M')
+    db.execute('''
+        INSERT INTO comments (slot_key, admin_comment, success_meeting, admin_edited_by, admin_edited_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(slot_key) DO UPDATE SET
+            admin_comment = excluded.admin_comment,
+            success_meeting = excluded.success_meeting,
+            admin_edited_by = excluded.admin_edited_by,
+            admin_edited_at = excluded.admin_edited_at
+    ''', (key, admin_comment, success_meeting, session['user'], now_str))
+    db.commit()
+
+    socketio.emit('admin_meeting_updated', {'slot_key': key})
+    return jsonify({'message': 'Данные встречи обновлены'})
+
 # ---------------------- API: История бронирований ----------------------
 @app.route('/api/bookings/history')
 @login_required
@@ -434,7 +500,9 @@ def get_booking_history():
     db = get_db()
     if is_admin():
         query = '''
-            SELECT b.slot_key, b.login, c.text as comment_text, c.last_edited_by, c.last_edited_at,
+            SELECT b.slot_key, b.login, 
+                   c.text as comment_text, c.last_edited_by, c.last_edited_at,
+                   c.admin_comment, c.success_meeting,
                    u.first_name, u.last_name, u.middle_name
             FROM bookings b
             LEFT JOIN comments c ON b.slot_key = c.slot_key
@@ -486,7 +554,9 @@ def get_booking_history():
             'lastEditedBy': row['last_edited_by'],
             'lastEditedAt': row['last_edited_at'],
             'displayName': display_name,
-            'isPast': is_past
+            'isPast': is_past,
+            'adminComment': row['admin_comment'] if is_admin() else None,
+            'successMeeting': bool(row['success_meeting']) if is_admin() else None
         })
     pages = (total + limit - 1) // limit
     return jsonify({'bookings': bookings, 'total': total, 'page': page, 'pages': pages, 'limit': limit})
