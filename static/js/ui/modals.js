@@ -224,7 +224,7 @@ function showEditDoctorModal(doctorId) {
   const html = `
     <div class="modal-overlay" id="editDoctorModal">
       <div class="edit-user-container" style="max-width: 500px;">
-        <div class="edit-user-header"><button class="edit-close-icon" id="closeDoctorModalIcon">✕</button><h3>✏️ Редактирование врача</h3></div>
+        <div class="edit-user-header"><button class="edit-close-icon" id="closeDoctorModalIcon">✕</button><h3>✏️ Редактирование дорожки</h3></div>
         <div class="edit-user-body">
           <div class="edit-field"><label>🏥 Название дорожки</label><input type="text" id="doctorName" value="${escapeHtml(doctor.name)}"></div>
           <div class="edit-field"><label>⏱ Интервал слотов (мин)</label>
@@ -270,7 +270,7 @@ function showEditDoctorModal(doctorId) {
     const breakStart = document.getElementById('doctorBreakStart').value;
     const breakEnd = document.getElementById('doctorBreakEnd').value;
     
-    if (!newName) { showToast('Имя врача не может быть пустым'); return; }
+    if (!newName) { showToast('Имя дорожки не может быть пустым'); return; }
     if (newEnd <= newStart) { showToast('Конец рабочего дня должен быть больше начала'); return; }
     if (breakStart && breakEnd && breakStart >= breakEnd) {
       showToast('Время начала технического перерыва должно быть меньше времени окончания');
@@ -288,18 +288,24 @@ function showEditDoctorModal(doctorId) {
       await loadDoctors();
       if (currentDoctor === doctorId) {
         currentDoctor = doctorId;
-        await loadBookingsForDoctor(currentDoctor);
       }
       renderFullApp();
+      setTimeout(async () => {
+        if (currentDoctor === doctorId) {
+          await loadBookingsForDoctor(currentDoctor);
+          updateHighlightedBooking();
+          updateInfoPanel();
+        }
+      }, 50);
       modal.remove();
-      showToast('Настройки врача сохранены');
+      showToast('Настройки дорожки сохранены');
     } catch(err) {
       showToast(err.message);
     }
   });
 }
 
-// ========== ИСТОРИЯ БРОНИРОВАНИЙ (с корректным интервалом для каждого врача) ==========
+// ========== ИСТОРИЯ БРОНИРОВАНИЙ ==========
 
 let _currentEditingData = null;
 let _currentAdminEditingData = null;
@@ -315,13 +321,13 @@ async function fetchAdminMeetingData(date, time) {
     }
 }
 
-async function updateAdminMeetingData(date, time, adminComment, successMeeting) {
+async function updateAdminMeetingData(date, time, adminComment, successMeeting, doctor = currentDoctor) {
     if (!isAdminUser) return;
     const body = {};
     if (adminComment !== null) body.adminComment = adminComment;
     if (successMeeting !== null) body.successMeeting = successMeeting;
     try {
-        await apiFetch(`/api/admin/meeting/${date}/${time}?doctor=${currentDoctor}`, {
+        await apiFetch(`/api/admin/meeting/${date}/${time}?doctor=${doctor}`, {
             method: 'PUT',
             body: JSON.stringify(body)
         });
@@ -405,7 +411,6 @@ function renderHistoryContent(data) {
   if (!body) return;
   const { bookings, page, pages } = data;
 
-  // Построим карту интервалов для каждого врача (по id)
   const doctorIntervalMap = {};
   doctorsList.forEach(doc => {
     doctorIntervalMap[doc.id] = doc.slotInterval || 60;
@@ -448,7 +453,7 @@ function renderHistoryContent(data) {
     <table class="history-table">
       <thead>
         <tr><th>Дата и время</th>${isAdminUser ? '<th>Пользователь</th>' : ''}
-          <th>Врач</th>
+          <th>Дорожка</th>
           ${isAdminUser ? '<th>Успешно</th>' : ''}
           <th>Комментарий пользователя</th>${isAdminUser ? '<th>Комментарий администратора</th>' : ''}
         </tr>
@@ -470,10 +475,7 @@ function renderHistoryContent(data) {
     const dateObj = new Date(booking.date);
     const dateStr = dateObj.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
     const [hour, minute] = booking.time.split(':').map(Number);
-    
-    // Берём интервал для конкретного врача
     const slotInterval = doctorIntervalMap[booking.doctor] || 60;
-    
     const endTime = new Date(dateObj);
     endTime.setHours(hour, minute, 0, 0);
     endTime.setMinutes(endTime.getMinutes() + slotInterval);
@@ -487,10 +489,11 @@ function renderHistoryContent(data) {
     const row = tbody.insertRow();
     let cell = row.insertCell(); cell.setAttribute('data-label', 'Дата'); cell.innerHTML = `<em>${escapeHtml(dateStr)}, </br> ${escapeHtml(timeStr)}</em>`;
     if (isAdminUser) { cell = row.insertCell(); cell.setAttribute('data-label', 'Пользователь'); cell.textContent = booking.displayName || booking.login; }
-    cell = row.insertCell(); cell.setAttribute('data-label', 'Врач'); cell.textContent = doctorName;
+    cell = row.insertCell(); cell.setAttribute('data-label', 'Дорожка'); cell.textContent = doctorName;
     if (isAdminUser) {
       cell = row.insertCell(); cell.setAttribute('data-label', 'Успешно'); cell.style.textAlign = 'center';
-      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'success-checkbox'; cb.dataset.key = booking.key; cb.checked = !!booking.successMeeting;
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'success-checkbox'; 
+      cb.dataset.key = booking.key; cb.dataset.doctor = booking.doctor; cb.checked = !!booking.successMeeting;
       cell.appendChild(cb);
     }
     cell = row.insertCell(); cell.setAttribute('data-label', 'Комментарий пользователя'); cell.className = 'user-comment-cell'; cell.dataset.key = booking.key;
@@ -502,7 +505,8 @@ function renderHistoryContent(data) {
     cell.appendChild(editInfoSpan);
     if (isAdminUser) {
       cell = row.insertCell(); cell.setAttribute('data-label', 'Комментарий администратора');
-      const adminDiv = document.createElement('div'); adminDiv.className = 'history-comment admin-comment editable'; adminDiv.dataset.key = booking.key; adminDiv.dataset.type = 'admin';
+      const adminDiv = document.createElement('div'); adminDiv.className = 'history-comment admin-comment editable'; 
+      adminDiv.dataset.key = booking.key; adminDiv.dataset.doctor = booking.doctor; adminDiv.dataset.type = 'admin';
       adminDiv.innerHTML = booking.adminComment ? escapeHtml(booking.adminComment) : '<em>Нет комментария</em>';
       cell.appendChild(adminDiv);
     }
@@ -664,6 +668,7 @@ async function adminCommentClickHandler(e) {
 
   const key = div.getAttribute('data-key');
   if (!key) return;
+  const doctor = div.getAttribute('data-doctor');
   const [date, time] = key.split('|');
   let currentText = div.innerText.trim();
   if (currentText === 'Нет комментария') currentText = '';
@@ -680,7 +685,7 @@ async function adminCommentClickHandler(e) {
     const newText = textarea.value;
     if (newText.trim() === currentText.trim()) { cancelEdit(); return; }
     try {
-      await updateAdminMeetingData(date, time, newText, null);
+      await updateAdminMeetingData(date, time, newText, null, doctor);
       div.innerHTML = newText ? escapeHtml(newText) : '<em>Нет комментария</em>';
       closeEditMode(false);
       showToast('Админ-комментарий сохранён');
@@ -706,10 +711,73 @@ async function adminCommentClickHandler(e) {
 async function successCheckboxChangeHandler(e) {
   const cb = e.currentTarget;
   const key = cb.getAttribute('data-key');
+  const doctor = cb.getAttribute('data-doctor');
   if (!key) return;
   const [date, time] = key.split('|');
   const successMeeting = cb.checked;
-  try { await updateAdminMeetingData(date, time, null, successMeeting); } catch(err) { showToast('Ошибка обновления статуса'); cb.checked = !cb.checked; }
+  try { 
+    await updateAdminMeetingData(date, time, null, successMeeting, doctor); 
+  } catch(err) { 
+    showToast('Ошибка обновления статуса'); 
+    cb.checked = !cb.checked; 
+  }
+}
+
+// ---------- Редактирование заголовка страницы (админ) — исправленная версия с DOM ----------
+function showEditTitleModal() {
+    const modalOverlay = document.createElement('div');
+    modalOverlay.className = 'modal-overlay';
+    modalOverlay.id = 'editTitleModal';
+    
+    const container = document.createElement('div');
+    container.className = 'edit-user-container';
+    container.style.maxWidth = '450px';
+    
+    container.innerHTML = `
+        <div class="edit-user-header">
+            <button class="edit-close-icon" id="closeTitleModalIcon">✕</button>
+            <h3>✏️ Редактирование заголовка</h3>
+        </div>
+        <div class="edit-user-body">
+            <div class="edit-field">
+                <label>Название консультации</label>
+                <input type="text" id="titleInput" maxlength="100">
+            </div>
+            <div class="edit-actions">
+                <button id="saveTitleBtn" class="save-edit-btn">💾 Сохранить</button>
+                <button id="cancelTitleBtn" class="cancel-edit-btn">Отмена</button>
+            </div>
+        </div>
+    `;
+    modalOverlay.appendChild(container);
+    document.body.appendChild(modalOverlay);
+    
+    const input = document.getElementById('titleInput');
+    input.value = window.currentTitle;
+    
+    const closeModal = () => modalOverlay.remove();
+    document.getElementById('closeTitleModalIcon')?.addEventListener('click', closeModal);
+    document.getElementById('cancelTitleBtn')?.addEventListener('click', closeModal);
+    document.getElementById('saveTitleBtn')?.addEventListener('click', async () => {
+        const newTitle = input.value.trim();
+        if (!newTitle) {
+            showToast('Заголовок не может быть пустым');
+            return;
+        }
+        try {
+            const data = await apiFetch('/api/settings/title', {
+                method: 'POST',
+                body: JSON.stringify({ title: newTitle })
+            });
+            showToast(data.message || 'Заголовок обновлён');
+            window.currentTitle = data.title;
+            const titleEl = document.getElementById('mainTitle');
+            if (titleEl) titleEl.textContent = window.currentTitle;
+            closeModal();
+        } catch (err) {
+            showToast(err.message || 'Ошибка обновления');
+        }
+    });
 }
 
 // Глобальная привязка функций
@@ -719,3 +787,4 @@ window.showRegisterModal = showRegisterModal;
 window.showEditUserModal = showEditUserModal;
 window.showEditDoctorModal = showEditDoctorModal;
 window.showUsersManagementModal = showUsersManagementModal;
+window.showEditTitleModal = showEditTitleModal;

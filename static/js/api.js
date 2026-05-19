@@ -72,6 +72,15 @@ async function deleteDoctor(id) {
 
 async function loadInitialData() {
   highlightedBookingKey = null;
+  
+  // ========== ДОБАВЛЕНО: загрузка заголовка ==========
+  if (typeof loadTitle === 'function') {
+    await loadTitle();
+  } else {
+    console.warn('loadTitle не определена, заголовок не будет загружен');
+  }
+  // ===================================================
+  
   await loadDoctors();
   const me = await apiFetch('/api/me').catch(() => ({ login: null, is_admin: false }));
   currentUser = me.login;
@@ -283,7 +292,6 @@ async function fetchPendingList() {
   return pendingUsers;
 }
 
-// ИЗМЕНЁННАЯ ФУНКЦИЯ fetchBookingHistory
 async function fetchBookingHistory(page = 1, search = '', doctor = '') {
   const params = new URLSearchParams({ page, limit: 30, doctor });
   if (search) params.append('search', search);

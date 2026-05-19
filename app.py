@@ -130,21 +130,25 @@ def _ensure_tables():
     if 'break_end' not in columns:
         db.execute("ALTER TABLE doctors ADD COLUMN break_end TEXT DEFAULT ''")
     
-    doctors = [('doctor1', 'Врач 1', 1, 60, 9, 21, '', ''),
-               ('doctor2', 'Врач 2', 2, 60, 9, 21, '', ''),
-               ('doctor3', 'Врач 3', 3, 60, 9, 21, '', '')]
+    doctors = [('doctor1', 'Врач 1', 1, 60, 9, 21, '', '')]
     for doc in doctors:
         db.execute('''INSERT OR IGNORE INTO doctors 
                       (id, name, display_order, slot_interval, start_hour, end_hour, break_start, break_end) 
                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', doc)
     
-    # Таблица глобальных настроек (для совместимости)
+    # Таблица глобальных настроек
     db.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )
     ''')
+    
+    # Устанавливаем заголовок по умолчанию, если отсутствует
+    default_title = "📅 Консультация нутрициолога"
+    row = db.execute("SELECT value FROM settings WHERE key = 'title'").fetchone()
+    if not row:
+        db.execute("INSERT INTO settings (key, value) VALUES (?, ?)", ('title', default_title))
     
     # Создаём администратора
     hashed = bcrypt.hashpw(ADMIN_DEFAULT_PASSWORD.encode(), bcrypt.gensalt()).decode()
@@ -535,14 +539,14 @@ def update_admin_meeting_data(date, time):
     socketio.emit('admin_meeting_updated', {'slot_key': key, 'doctor': doctor})
     return jsonify({'message': 'Данные встречи обновлены'})
 
-# ---------------------- API: История бронирований (с поддержкой фильтра по врачу) ----------------------
+# ---------------------- API: История бронирований ----------------------
 @app.route('/api/bookings/history')
 @login_required
 def get_booking_history():
     page = request.args.get('page', 1, type=int)
     limit = request.args.get('limit', 30, type=int)
     search = request.args.get('search', '').strip()
-    doctor = request.args.get('doctor', '').strip()   # '' означает "все врачи"
+    doctor = request.args.get('doctor', '').strip()
     if page < 1:
         page = 1
     offset = (page - 1) * limit
@@ -707,7 +711,6 @@ def create_doctor():
         start_hour = 9
     if end_hour < start_hour or end_hour > 24:
         end_hour = start_hour + 1
-    # валидация перерыва
     if break_start and break_end:
         try:
             datetime.strptime(break_start, '%H:%M')
@@ -793,6 +796,11 @@ def update_doctor(doctor_id):
 def delete_doctor(doctor_id):
     if not is_admin():
         return jsonify({'error': 'Доступ запрещён'}), 403
+    
+    # ЗАПРЕЩАЕМ УДАЛЕНИЕ ВРАЧА doctor1
+    if doctor_id == 'doctor1':
+        return jsonify({'error': 'Нельзя удалить основного врача (Врач 1)'}), 400
+
     db = get_db()
     count = db.execute('SELECT COUNT(*) FROM doctors').fetchone()[0]
     if count <= 1:
@@ -804,6 +812,29 @@ def delete_doctor(doctor_id):
     db.commit()
     socketio.emit('doctors_updated', {})
     return jsonify({'message': 'Врач удалён'})
+
+# ---------------------- API: Заголовок страницы ----------------------
+@app.route('/api/settings/title', methods=['GET'])
+def get_title():
+    db = get_db()
+    row = db.execute("SELECT value FROM settings WHERE key = 'title'").fetchone()
+    title = row['value'] if row else "📅 Консультация нутрициолога"
+    return jsonify({'title': title})
+
+@app.route('/api/settings/title', methods=['POST'])
+@login_required
+def update_title():
+    if not is_admin():
+        return jsonify({'error': 'Доступ запрещён'}), 403
+    data = request.get_json()
+    new_title = data.get('title', '').strip()
+    if not new_title:
+        return jsonify({'error': 'Заголовок не может быть пустым'}), 400
+    db = get_db()
+    db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ('title', new_title))
+    db.commit()
+    socketio.emit('title_updated', {'title': new_title})
+    return jsonify({'message': 'Заголовок обновлён', 'title': new_title})
 
 # ---------------------- Главная страница ----------------------
 @app.route('/')

@@ -73,3 +73,11 @@ socket.on('doctors_updated', async () => {
     renderFullApp();
     await loadBookingsForDoctor(currentDoctor);
 });
+
+socket.on('title_updated', (data) => {
+    if (data && data.title) {
+        currentTitle = data.title;
+        const titleEl = document.getElementById('mainTitle');
+        if (titleEl) titleEl.textContent = currentTitle;
+    }
+});

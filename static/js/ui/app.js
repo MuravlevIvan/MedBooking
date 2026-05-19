@@ -1,8 +1,27 @@
 // ===================== Сборка интерфейса и глобальные обработчики =====================
+
+// Глобальная переменная для заголовка (доступна везде)
+window.currentTitle = "📅 Консультация нутрициолога";
+
+async function loadTitle() {
+    try {
+        const data = await apiFetch('/api/settings/title');
+        window.currentTitle = data.title;
+        const titleEl = document.getElementById('mainTitle');
+        if (titleEl) titleEl.textContent = window.currentTitle;
+    } catch(e) {
+        console.warn('Не удалось загрузить заголовок', e);
+    }
+}
+
+async function refreshTitleFromServer() {
+    await loadTitle();
+}
+
 function renderFullApp() {
   const appContainer = document.getElementById('appContainer');
   
-  // Генерация вкладок врачей
+  // Генерация вкладок дорожек
   let doctorsHtml = '';
   if (isAdminUser) {
     doctorsHtml = doctorsList.map(doc => `
@@ -11,10 +30,13 @@ function renderFullApp() {
           <span class="doctor-name">${escapeHtml(doc.name)}</span>
         </button>
         <button class="doctor-edit-btn" data-id="${doc.id}" title="Редактировать">✏️</button>
-        <button class="doctor-delete-btn" data-id="${doc.id}" title="Удалить" ${doctorsList.length === 1 ? 'disabled' : ''}>🗑️</button>
+        <button class="doctor-delete-btn" data-id="${doc.id}" title="Удалить" 
+          ${doctorsList.length === 1 || doc.id === 'doctor1' ? 'disabled' : ''}>
+          🗑️
+        </button>
       </div>
     `).join('');
-    doctorsHtml += `<button class="doctor-add-btn" id="addDoctorBtn" title="Добавить врача">➕</button>`;
+    doctorsHtml += `<button class="doctor-add-btn" id="addDoctorBtn" title="Добавить дорожку">➕</button>`;
   } else {
     doctorsHtml = doctorsList.map(doc => `
       <button class="doctor-tab ${currentDoctor === doc.id ? 'active' : ''}" data-doctor="${doc.id}">
@@ -23,7 +45,7 @@ function renderFullApp() {
     `).join('');
   }
 
-  // Информация о настройках текущего врача (интервал, часы работы, техперерыв)
+  // Информация о настройках текущей дорожки
   const currentDoctorSettings = doctorsList.find(d => d.id === currentDoctor);
   let settingsInfo = '';
   if (isAdminUser && currentDoctorSettings) {
@@ -40,7 +62,10 @@ function renderFullApp() {
   appContainer.innerHTML = `
     <div class="main-card">
       <div class="app-header">
-        <div><h1>📅 Консультация нутрициолога</h1></div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <h1 id="mainTitle">${escapeHtml(window.currentTitle)}</h1>
+          ${isAdminUser ? `<button id="editTitleBtn" class="edit-title-btn" title="Редактировать заголовок">✏️</button>` : ''}
+        </div>
         <div style="display:flex; justify-content: center; gap:0.8rem; flex-wrap:wrap;">
           <div class="user-info ${!currentUser ? 'guest' : (isAdminUser ? 'admin' : (allUsers.includes(currentUser) ? '' : 'pending'))}" id="profileBtn">
             👤 ${currentUser ? escapeHtml(getDisplayName(currentUser)) : 'Гость'} ${isAdminUser ? ' 👑' : ''}
@@ -173,7 +198,7 @@ function renderFullApp() {
     historyBtn.addEventListener('click', () => showHistoryModal('', ''));
   }
 
-  // Переключение врачей (исправленная подсветка)
+  // Переключение дорожек
   document.querySelectorAll('.doctor-tab').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       const doctorId = btn.dataset.doctor;
@@ -184,11 +209,9 @@ function renderFullApp() {
       editingCommentKey = null;
       await loadBookingsForDoctor(currentDoctor);
       
-      // Убираем active со всех врачей (учитываем обёртки для админа)
       document.querySelectorAll('.doctor-tab, .doctor-tab-wrapper').forEach(el => {
         el.classList.remove('active');
       });
-      // Добавляем active: если есть обёртка (для админа), то ей, иначе самой кнопке
       const wrapper = btn.closest('.doctor-tab-wrapper');
       if (wrapper) {
         wrapper.classList.add('active');
@@ -199,7 +222,6 @@ function renderFullApp() {
       updateInfoPanel();
       renderMainContent();
       renderBookingsList();
-      // Обновить отображение настроек врача
       const newSettings = doctorsList.find(d => d.id === currentDoctor);
       const settingsDiv = document.getElementById('doctorSettingsInfo');
       if (settingsDiv && newSettings) {
@@ -211,7 +233,7 @@ function renderFullApp() {
     });
   });
 
-  // Управление врачами (админ)
+  // Управление дорожками (админ)
   if (isAdminUser) {
     document.querySelectorAll('.doctor-edit-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
@@ -220,15 +242,20 @@ function renderFullApp() {
         showEditDoctorModal(id);
       });
     });
+    // Обработчик удаления дорожки с защитой doctor1
     document.querySelectorAll('.doctor-delete-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
-        if (doctorsList.length <= 1) {
-          showToast('Нельзя удалить единственного врача');
+        if (id === 'doctor1') {
+          showToast('Нельзя удалить основную дорожку (Дорожка 1)');
           return;
         }
-        if (confirm(`Удалить врача "${doctorsList.find(d => d.id === id)?.name}"? Все его бронирования и комментарии будут удалены.`)) {
+        if (doctorsList.length <= 1) {
+          showToast('Нельзя удалить единственного дорожку');
+          return;
+        }
+        if (confirm(`Удалить Дорожку "${doctorsList.find(d => d.id === id)?.name}"? Все его бронирования и комментарии будут удалены.`)) {
           try {
             await deleteDoctor(id);
             await loadDoctors();
@@ -246,7 +273,7 @@ function renderFullApp() {
     const addBtn = document.getElementById('addDoctorBtn');
     if (addBtn) {
       addBtn.addEventListener('click', async () => {
-        const name = prompt('Введите имя нового врача:', 'Новый врач');
+        const name = prompt('Введите имя новой дорожки:', 'Новая дорожка');
         if (name && name.trim()) {
           try {
             await createDoctor(name.trim(), 60, 9, 21, '', '');
@@ -260,6 +287,12 @@ function renderFullApp() {
         }
       });
     }
+  }
+
+  // Кнопка редактирования заголовка
+  const editTitleBtn = document.getElementById('editTitleBtn');
+  if (editTitleBtn) {
+    editTitleBtn.addEventListener('click', () => showEditTitleModal());
   }
 
   document.addEventListener('click', function(e) {
@@ -277,3 +310,7 @@ function renderFullApp() {
   renderBookingsList();
   updateInfoPanel();
 }
+
+window.renderFullApp = renderFullApp;
+window.loadTitle = loadTitle;
+window.refreshTitleFromServer = refreshTitleFromServer;
